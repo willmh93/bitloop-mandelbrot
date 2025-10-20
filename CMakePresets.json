@@ -1,0 +1,95 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {"major": 3, "minor": 21, "patch": 0},
+
+  "configurePresets": [
+    {
+      "name": "ninja-debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/ninja-debug",
+      "cacheVariables": {
+        "BUILD_FLAVOR": "ninja-debug",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
+        "VCPKG_INSTALL_OPTIONS": "--x-abi-tools-use-exact-versions"
+      }
+    },
+    {
+      "name": "ninja-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/ninja-release",
+      "cacheVariables": {
+        "BUILD_FLAVOR": "ninja-release",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
+        "VCPKG_INSTALL_OPTIONS": "--x-abi-tools-use-exact-versions"
+      }
+    },
+    {
+      "name": "vs2022",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/vs2022",
+      "cacheVariables": {
+        "BUILD_FLAVOR": "vs2022",
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
+        "VCPKG_INSTALL_OPTIONS": "--x-abi-tools-use-exact-versions"
+      }
+    },
+    {
+      "name": "wasm32-debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/wasm32-debug",
+      "cacheVariables": {
+        "BUILD_FLAVOR": "wasm32-debug",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+        "VCPKG_TARGET_TRIPLET": "wasm32-emscripten-multithreaded",
+        "VCPKG_CMAKE_CONFIGURE_OPTIONS": "-pthread -matomics -mbulk-memory",
+        "VCPKG_INSTALL_OPTIONS": "--x-abi-tools-use-exact-versions"
+      }
+    },
+    {
+      "name": "wasm32-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/wasm32-release",
+      "cacheVariables": {
+        "BUILD_FLAVOR": "wasm32-release",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+        "VCPKG_TARGET_TRIPLET": "wasm32-emscripten-multithreaded",
+        "VCPKG_CMAKE_CONFIGURE_OPTIONS": "-pthread -matomics -mbulk-memory",
+        "VCPKG_INSTALL_OPTIONS": "--x-abi-tools-use-exact-versions"
+      }
+    },
+    {
+      "name": "wasm32-release-debug-info",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/wasm32-release-debug-info",
+      "cacheVariables": {
+        "BUILD_FLAVOR": "wasm32-release-debug-info",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+        "VCPKG_TARGET_TRIPLET": "wasm32-emscripten-multithreaded",
+        "VCPKG_CMAKE_CONFIGURE_OPTIONS": "-pthread -matomics -mbulk-memory",
+        "VCPKG_INSTALL_OPTIONS": "--x-abi-tools-use-exact-versions"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "ninja-debug",               "configurePreset": "ninja-debug" },
+    { "name": "ninja-release",             "configurePreset": "ninja-release" },
+    { "name": "wasm32-debug",              "configurePreset": "wasm32-debug" },
+    { "name": "wasm32-release",            "configurePreset": "wasm32-release" },
+    { "name": "wasm32-release-debug-info", "configurePreset": "wasm32-release-debug-info" }
+  ]
+}

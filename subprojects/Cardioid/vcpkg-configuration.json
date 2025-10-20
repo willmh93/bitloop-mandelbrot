@@ -1,0 +1,16 @@
+{
+  "default-registry": {
+    "kind": "builtin",
+    "baseline": "51d6ada21807f14625026adbc3966208e6d03aed"
+  },
+  "registries": [
+    {
+      "kind": "git",
+      "baseline": "30e13ffee2aa9a22f54eeea3605a0c91d096c1c4",
+      "repository": "https://github.com/willmh93/bitloop-registry.git",
+      "packages": [
+        "bitloop"
+      ]
+    }
+  ]
+}
