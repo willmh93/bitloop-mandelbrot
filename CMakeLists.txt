@@ -24,8 +24,5 @@ endif()
 
 
 bitloop_add_dependency(Mandelbrot  "subprojects/Cardioid")
-
 bitloop_hide(Cardioid)
-
-message(STATUS "Actually where we should finalize: Mandelbrot")
 bitloop_finalize()
