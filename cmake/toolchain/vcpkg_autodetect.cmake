@@ -90,8 +90,8 @@ set(VCPKG_PINNED_SHA "74e6536215718009aae747d86d84b78376bf9e09" CACHE STRING "Pi
 
 
 # Potential vcpkg directory paths
-set(LOCAL_VCPKG_DIR       "${CMAKE_SOURCE_DIR}/vcpkg")
-set(WORKSPACE_VCPKG_DIR   "${WORKSPACE_DIR}/vcpkg")
+set(LOCAL_VCPKG_DIR       "${CMAKE_SOURCE_DIR}/.vcpkg")
+set(WORKSPACE_VCPKG_DIR   "${WORKSPACE_DIR}/.vcpkg")
 
 # Potential vcpkg toolchain paths
 set(LOCAL_VCPKG_PATH      "${LOCAL_VCPKG_DIR}/scripts/buildsystems/vcpkg.cmake")
@@ -171,15 +171,20 @@ endif()
 set(ENV{VCPKG_ROOT} "${_vcpkg_dir}")
 set(VCPKG_ROOT "${_vcpkg_dir}" CACHE PATH "" FORCE)
 
-# Pick a location relative to the detected VCPKG_ROOT
-set(_cache_hint "${_vcpkg_dir}/../.vcpkg-cache")
-get_filename_component(_cache_abs "${_cache_hint}" REALPATH)
-file(MAKE_DIRECTORY "${_cache_abs}")
+# Pick a root location relative to the determined VCPKG_ROOT
+get_filename_component(_root_dir "${_vcpkg_dir}/.." REALPATH)
 
-# Shared binary cache
-set(ENV{VCPKG_DEFAULT_BINARY_CACHE} "${_cache_abs}")
-set(ENV{VCPKG_BINARY_SOURCES} "clear;files,${_cache_abs},readwrite")
-set(ENV{VCPKG_DEFAULT_BINARY_CACHE} "${_vcpkg_dir}/../.vcpkg-cache")
+set(_cache_dir      "${_root_dir}/.vcpkg-cache")
+set(_installed_dir  "${_root_dir}/.vcpkg-installed")
+
+file(MAKE_DIRECTORY "${_cache_dir}")
+file(MAKE_DIRECTORY "${_installed_dir}")
+
+# Shared binary cache / vcpkg-installed dir
+set(ENV{VCPKG_INSTALLED_DIR}         "${_installed_dir}")
+set(ENV{VCPKG_DEFAULT_BINARY_CACHE}  "${_cache_dir}")
+set(ENV{VCPKG_BINARY_SOURCES}        "clear;files,${_cache_dir},readwrite")
+set(ENV{VCPKG_DEFAULT_BINARY_CACHE}  "${_vcpkg_dir}/../.vcpkg-cache")
 
 # Finally, load vcpkg toolchain
 message(STATUS "Using vcpkg at: ${_vcpkg_dir}")
