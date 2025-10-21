@@ -5,39 +5,61 @@
 #    - then chain-load that vcpkg toolchain
 
 # Helper: Walks up directory level looking for a ".bitloop-workspace" file
-function(find_workspace_root start_dir out_var)
-  set(dir "${start_dir}")
-  set(levels 0)
-  set(limit 15)
-  if (ARGC GREATER 3)
-    set(limit "${ARGV3}")
-  endif()
+function(find_bitloop_workspace start_dir out_dir is_root_ws)
+  set(limit 20)
 
-  # Normalize the start path (in case of relative paths / symlinks)
-  get_filename_component(dir "${dir}" REALPATH)
+  get_filename_component(dir "${start_dir}" REALPATH)
+  set(found "")
+  set(found_is_root OFF)
 
-  while (TRUE)
-    if (EXISTS "${dir}/.bitloop-workspace")
-      set(${out_var} "${dir}" PARENT_SCOPE)
-      return()
+  while(limit GREATER 0)
+    set(marker "${dir}/.bitloop-workspace")
+    if(EXISTS "${marker}")
+      # Read + normalize + lowercase for case-insensitive parse
+      file(READ "${marker}" _mk)
+      string(REPLACE "\r\n" "\n" _mk "${_mk}")
+      string(REPLACE "\r"   "\n" _mk "${_mk}")
+      string(TOLOWER "${_mk}" _mk_lower)
+
+      # Match "root = <token>" anywhere (no ^/$ anchors -> search whole text)
+      # CMake regex: no \s; use [ \t]
+      string(REGEX MATCH "[ \t]*root[ \t]*=[ \t]*([^ \t\r\n]+)" _m "${_mk_lower}")
+
+      set(is_root OFF)
+      if(_m)
+        # capture group (the value) is in CMAKE_MATCH_1
+        set(_val "${CMAKE_MATCH_1}")
+        if(_val STREQUAL "true" OR _val STREQUAL "1" OR _val STREQUAL "on" OR _val STREQUAL "yes")
+          set(is_root ON)
+        endif()
+      endif()
+
+      if(is_root)
+        # Hard stop: this is the authoritative root
+        set(${out_dir}    "${dir}" PARENT_SCOPE)
+        set(${is_root_ws} ON       PARENT_SCOPE)
+        return()
+      endif()
+
+      # Nearest non-hard marker: remember it, but keep walking in case a hard root appears above
+      if(found STREQUAL "")
+        set(found "${dir}")
+        set(found_is_root OFF)
+      endif()
     endif()
 
-    # Stop if we've hit the filesystem root (parent == self)
+    # climb
     get_filename_component(parent "${dir}" DIRECTORY)
-    if (parent STREQUAL dir)
+    if(parent STREQUAL dir)
       break()
     endif()
-
-    # Increment level, exit if we exceed limit
-    math(EXPR levels "${levels}+1")
-    if (levels GREATER limit)
-      break()
-    endif()
-
     set(dir "${parent}")
+    math(EXPR limit "${limit}-1")
   endwhile()
 
-  set(${out_var} "" PARENT_SCOPE)
+  # Return nearest (if any), and whether it was a hard root (it wasn't if we got here)
+  set(${out_dir}    "${found}"       PARENT_SCOPE)
+  set(${is_root_ws} "${found_is_root}" PARENT_SCOPE)
 endfunction()
 
 # Helper: Clones vcpkg to 'dest_dir' at the pinned <sha>
@@ -84,7 +106,7 @@ endfunction()
 
 
 # Look for workspace root
-find_workspace_root(${CMAKE_SOURCE_DIR} WORKSPACE_DIR 20)
+find_bitloop_workspace(${CMAKE_SOURCE_DIR} WORKSPACE_DIR IS_ROOT_WORKSPACE)
 
 set(VCPKG_PINNED_SHA "74e6536215718009aae747d86d84b78376bf9e09" CACHE STRING "Pinned vcpkg commit SHA")
 
@@ -136,6 +158,7 @@ endif()
 message(STATUS "")
 message(STATUS "-------------- Searching for vcpkg --------------")
 message(STATUS "WORKSPACE_DIR:          ${WORKSPACE_DIR}")
+message(STATUS "IS_ROOT_WORKSPACE:      ${IS_ROOT_WORKSPACE}")
 message(STATUS "FOUND_WORKSPACE:        ${FOUND_WORKSPACE}")
 message(STATUS "FOUND_WORKSPACE_VCPKG:  ${FOUND_WORKSPACE_VCPKG}")
 message(STATUS "FOUND_LOCAL_VCPKG:      ${FOUND_LOCAL_VCPKG}")
@@ -175,13 +198,13 @@ set(VCPKG_ROOT "${_vcpkg_dir}" CACHE PATH "" FORCE)
 get_filename_component(_root_dir "${_vcpkg_dir}/.." REALPATH)
 
 set(_cache_dir      "${_root_dir}/.vcpkg-cache")
-set(_installed_dir  "${_root_dir}/.vcpkg-installed")
+#set(_installed_dir  "${_root_dir}/.vcpkg-installed")
 
 file(MAKE_DIRECTORY "${_cache_dir}")
-file(MAKE_DIRECTORY "${_installed_dir}")
+#file(MAKE_DIRECTORY "${_installed_dir}")
 
 # Shared binary cache / vcpkg-installed dir
-set(ENV{VCPKG_INSTALLED_DIR}         "${_installed_dir}")
+#set(ENV{VCPKG_INSTALLED_DIR}         "${_installed_dir}")
 set(ENV{VCPKG_DEFAULT_BINARY_CACHE}  "${_cache_dir}")
 set(ENV{VCPKG_BINARY_SOURCES}        "clear;files,${_cache_dir},readwrite")
 set(ENV{VCPKG_DEFAULT_BINARY_CACHE}  "${_vcpkg_dir}/../.vcpkg-cache")
