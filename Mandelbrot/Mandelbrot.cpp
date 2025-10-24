@@ -56,7 +56,7 @@ void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
 
 bool Mandelbrot_Scene::compute_mandelbrot(EscapeField* field, CanvasImage128* bmp)
 {
-    MandelSmoothing   smoothing  = static_cast<MandelSmoothing>(smoothing_type);
+    MandelKernelFeatures   smoothing  = static_cast<MandelKernelFeatures>(smoothing_type);
     FloatingPointType float_type = getRequiredFloatType(smoothing, camera.relativeZoom<f128>());
 
     // Calculate first low-res phase in one-shot (no timeout)
@@ -76,7 +76,7 @@ bool Mandelbrot_Scene::compute_mandelbrot(EscapeField* field, CanvasImage128* bm
 
 void Mandelbrot_Scene::normalize_field(EscapeField* field, CanvasImage128* bmp)
 {
-    MandelSmoothing    smoothing = static_cast<MandelSmoothing>(smoothing_type);
+    MandelKernelFeatures    smoothing = static_cast<MandelKernelFeatures>(smoothing_type);
     FloatingPointType float_type = getRequiredFloatType(smoothing, camera.relativeZoom<f128>());
 
     floatInvoke(float_type, [&]<typename T>() { normalize_shading_limits<T>(field, bmp, camera, iter_params, dist_params); });

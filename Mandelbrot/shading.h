@@ -6,7 +6,7 @@
 
 SIM_BEG;
 
-enum class MandelSmoothing
+enum class MandelKernelFeatures
 {
     NONE = 0,
     ITER = 1,
@@ -39,7 +39,7 @@ static const char* MandelFormulaNames[(int)MandelShaderFormula::COUNT] = {
     "(iter * stripe) * dist"
 };
 
-static const char* MandelSmoothingNames[(int)MandelSmoothing::COUNT] = {
+static const char* MandelSmoothingNames[(int)MandelKernelFeatures::COUNT] = {
     "NONE",
     "ITER",
     "DIST",

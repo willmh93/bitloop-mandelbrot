@@ -34,7 +34,7 @@ struct MandelState
     double      gradient_shift_step            = 0.0078;
     double      hue_shift_step                 = 0.136;
                 
-    int         smoothing_type = (int)MandelSmoothing::ITER; // this is being dynamically set, no need to save
+    int         smoothing_type = (int)MandelKernelFeatures::ITER; // this is being dynamically set, no need to save
     int         shade_formula = (int)MandelShaderFormula::ITER_DIST_STRIPE;
 
     ImGradient  gradient;

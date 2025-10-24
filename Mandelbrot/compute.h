@@ -13,12 +13,12 @@
 
 SIM_BEG;
 
-inline FloatingPointType getRequiredFloatType(MandelSmoothing smoothing, f128 zoom)
+inline FloatingPointType getRequiredFloatType(MandelKernelFeatures smoothing, f128 zoom)
 {
     f128 MAX_ZOOM_FLOAT;
     f128 MAX_DOUBLE_ZOOM;
 
-    if (((int)smoothing & (int)MandelSmoothing::DIST))
+    if (((int)smoothing & (int)MandelKernelFeatures::DIST))
     {
         MAX_ZOOM_FLOAT = 10.0;
         MAX_DOUBLE_ZOOM = 2e10;
@@ -26,7 +26,7 @@ inline FloatingPointType getRequiredFloatType(MandelSmoothing smoothing, f128 zo
     else
     {
         MAX_ZOOM_FLOAT = 10000;
-        MAX_DOUBLE_ZOOM = 2e12;
+        MAX_DOUBLE_ZOOM = 1e11;
     }
 
     if (zoom < MAX_ZOOM_FLOAT) return FloatingPointType::F32;
@@ -127,24 +127,24 @@ namespace detail
 } // namespace detail
 
 
-template<MandelSmoothing Smooth_Iter>
+template<MandelKernelFeatures Kernel_Features>
 constexpr float escape_radius()
 {
-    return (((int)Smooth_Iter & (int)MandelSmoothing::DIST) ? 512.0 : 64.0);
+    return (((int)Kernel_Features & (int)MandelKernelFeatures::DIST) ? 512.0 : 64.0);
 }
 
-template<MandelSmoothing Smooth_Iter>
+template<MandelKernelFeatures Kernel_Features>
 FAST_INLINE double log_escape_radius_squared()
 {
-    static double log_escape_r2 = log_as_double(escape_radius<Smooth_Iter>());
+    static double log_escape_r2 = log_as_double(escape_radius<Kernel_Features>());
     return log_escape_r2;
 }
 
 
-template<MandelSmoothing Smooth_Iter>
+template<MandelKernelFeatures Kernel_Features>
 constexpr float mandelbrot_smoothing_offset()
 {
-    constexpr float r2 = escape_radius<Smooth_Iter>();
+    constexpr float r2 = escape_radius<Kernel_Features>();
     return log2(log2(r2)) - 1.0f;
 }
 
@@ -186,7 +186,7 @@ template<class T> FAST_INLINE T clamp01(T v)
 template<class T> inline constexpr bool is_flt128_v = false;
 template<> inline constexpr bool is_flt128_v<f128> = true;
 
-template<class T, MandelSmoothing S>
+template<class T, MandelKernelFeatures S>
 FAST_INLINE void mandel_kernel(
     const T& x0,
     const T& y0,
@@ -214,9 +214,9 @@ FAST_INLINE void mandel_kernel(
     /// big gains to be made inbetween 2e12 and 1e26 for DIST mode
 
     using detail::cplx;
-    constexpr bool NEED_DIST = (bool)((int)S & (int)MandelSmoothing::DIST);
-    constexpr bool NEED_SMOOTH_ITER = (bool)((int)S & (int)MandelSmoothing::ITER);
-    constexpr bool NEED_STRIPES = (bool)((int)S & (int)MandelSmoothing::STRIPES);
+    constexpr bool NEED_DIST        = (bool)((int)S & (int)MandelKernelFeatures::DIST);
+    constexpr bool NEED_SMOOTH_ITER = (bool)((int)S & (int)MandelKernelFeatures::ITER);
+    constexpr bool NEED_STRIPES     = (bool)((int)S & (int)MandelKernelFeatures::STRIPES);
 
     constexpr T escape_r2 = T(escape_radius<S>());
     constexpr T zero = T(0), one = T(1);
@@ -723,7 +723,7 @@ bool radialMandelbrot()
         uint32_t u32;
         iter_gradient_color(smooth_iter, u32);
 
-        //double ratio = Smooth_Iter / f_max_iter;
+        //double ratio = smooth_iter / f_max_iter;
         //iter_ratio_color(ratio, r, g, b);
 
         pending_bmp->setPixel(x, y, u32);
@@ -737,7 +737,7 @@ bool radialMandelbrot()
 /// have a depth > 0 (i.e. Filling in the blanks)
 /// --------------------------------------------------------------
 
-template<typename T, MandelSmoothing Smoothing, bool flatten>
+template<typename T, MandelKernelFeatures Smoothing, bool flatten>
 bool mandelbrot(CanvasImage128* bmp, EscapeField* field, int iter_lim, int threads, int timeout, int& current_row, StripeParams stripe_params={})
 {
     bool frame_complete = bmp->forEachWorldPixel<T>(current_row, [&](int x, int y, T wx, T wy)
@@ -766,8 +766,8 @@ bool mandelbrot(CanvasImage128* bmp, EscapeField* field, int iter_lim, int threa
         }
 
         field_pixel.depth = depth;    // not likely not need more than float precision
-        field_pixel.setStripe(stripe);  // not likely not need more than float precision
-        field_pixel.setDist(dist);    // store dist with appropriate precision
+        field_pixel.setStripe(stripe); // store stripe with appropriate precision
+        field_pixel.setDist(dist);  // store dist with appropriate precision
 
     }, threads, timeout);
 
@@ -779,20 +779,8 @@ void normalize_shading_limits(
     EscapeField* field,
     CanvasImage128* bmp,
     CameraInfo& camera,
-
     const IterParams& iter_params,
     const DistParams& dist_params
-
-    //bool   cycle_iter_dynamic_limit,
-    //bool   cycle_iter_normalize_depth,
-    //double cycle_iter_normalize_low_fact,
-    //double cycle_iter_normalize_high_fact,
-    //double cycle_iter_log1p_weight,
-    //double cycle_iter_value,
-
-    //bool   cycle_dist_invert,
-    //double cycle_dist_sharpness,
-    //double cycle_dist_value
 )
 {
     field->min_depth = std::numeric_limits<f64>::max();
@@ -800,26 +788,20 @@ void normalize_shading_limits(
     field->min_stripe = std::numeric_limits<f128>::max();
     field->max_stripe = std::numeric_limits<f128>::lowest();
 
-    //double sum_depth = 0.0;
-    //int sum_depth_samples = 0;
-
     // Redetermine minimum depth for entire visible field
     bmp->forEachPixel([&](int x, int y)
     {
         EscapeFieldPixel& field_pixel = field->at(x, y);
         double depth = field_pixel.depth;
-        T stripe = field_pixel.getStripe<T>();
-
 
         if (depth >= INSIDE_MANDELBROT_SET_SKIPPED || field_pixel.flag_for_skip) return;
+
         if (depth < field->min_depth) field->min_depth = depth;
         if (depth > field->max_depth) field->max_depth = depth;
 
+        T stripe = field_pixel.getStripe<T>();
         if (stripe < field->min_stripe) field->min_stripe = stripe;
         if (stripe > field->max_stripe) field->max_stripe = stripe;
-
-        //sum_depth += depth;
-        //sum_depth_samples++;
     }, 0);
 
 
@@ -830,9 +812,9 @@ void normalize_shading_limits(
 
     //double avg_depth = sum_depth / (double)(sum_depth_samples);
 
-    double low_ratio = iter_params.cycle_iter_normalize_low_fact / 100.0;
-    double high_ratio = iter_params.cycle_iter_normalize_high_fact / 100.0;
-    //field->assumed_iter_min = mandelbrotIterLimit(cam_view.zoom) * low_ratio;
+    double low_ratio = 0;/// 0.25;  // iter_params.cycle_iter_normalize_low_fact / 100.0;
+    double high_ratio = 0.5;/// 0.5;  // iter_params.cycle_iter_normalize_high_fact / 100.0;
+    /////field->assumed_iter_min = mandelbrotIterLimit(cam_view.relativeZoom<f128>()) * low_ratio;
     field->assumed_iter_min = mandelbrotIterLimit(camera.relativeZoom<f128>()) * low_ratio;
     field->assumed_iter_max = mandelbrotIterLimit(camera.relativeZoom<f128>()) * high_ratio;
 
@@ -840,7 +822,7 @@ void normalize_shading_limits(
     // Calculate normalized depth/dist
     double dist_min_pixel_ratio = ((100.0 - dist_params.cycle_dist_sharpness) / 100.0 + 0.00001);
     f128 stable_min_raw_dist = camera.getTransform().toWorldOffset<f128>(dist_min_pixel_ratio, 0.0).magnitude(); // fraction of a pixel
-    f128 stable_max_raw_dist = f128{ (bmp->worldSize().magnitude()) } / f128{ 2.0 };                         // half diagonal world viewport size
+    f128 stable_max_raw_dist = f128{ (bmp->worldSize().magnitude()) } / f128{ 2.0 }; // half diagonal world viewport size
 
     // @@ todo: Use downgraded type from: stable_min_raw_dist?
     field->stable_min_dist = (dist_params.cycle_dist_invert ? -1 : 1) * log(stable_min_raw_dist);
@@ -848,26 +830,30 @@ void normalize_shading_limits(
 
     ///blPrint() << "stable_min_dist: " << field->stable_min_dist << "   stable_max_dist: " << field->stable_max_dist;
 
-    ///if (iter_params.cycle_iter_dynamic_limit)
-    //{
-        //double assumed_iter_lim = mandelbrotIterLimit(cam_view.zoom) * 0.5;
+    //double color_cycle_iters;
+    //if (iter_params.cycle_iter_dynamic_limit)
+    //    color_cycle_iters = (iter_params.cycle_iter_value * (field->assumed_iter_max - (iter_params.cycle_iter_normalize_depth ? field->assumed_iter_min : 0)));
+    //else
+    //    color_cycle_iters = iter_params.cycle_iter_value;
+
+    if (iter_params.cycle_iter_dynamic_limit)
+    {
+        double assumed_iter_lim = mandelbrotIterLimit(camera.relativeZoom<f128>()) * 0.5;
 
         /// "cycle_iter_value" represents ratio of iter_lim
-        //double color_cycle_iters = (cycle_iter_value * (assumed_iter_lim - (cycle_iter_normalize_depth ? field->min_depth : 0)));
-    double color_cycle_iters;
-    if (iter_params.cycle_iter_dynamic_limit)
-        color_cycle_iters = (iter_params.cycle_iter_value * (field->assumed_iter_max - (iter_params.cycle_iter_normalize_depth ? field->assumed_iter_min : 0)));
-    else
-        color_cycle_iters = iter_params.cycle_iter_value;
-
+        double color_cycle_iters;
+        if (iter_params.cycle_iter_normalize_depth)
+            color_cycle_iters = (iter_params.cycle_iter_value * (field->assumed_iter_max - field->assumed_iter_min));
+        else
+            color_cycle_iters = iter_params.cycle_iter_value * assumed_iter_lim;
 
         field->log_color_cycle_iters = Math::linear_log1p_lerp(color_cycle_iters, iter_params.cycle_iter_log1p_weight);
-    ///}
-    ///else
-    ///{
-    ///    /// "cycle_iter_value" represents actual iter_lim
-    ///    field->log_color_cycle_iters = Math::linear_log1p_lerp(iter_params.cycle_iter_value, iter_params.cycle_iter_log1p_weight);
-    ///}
+    }
+    else
+    {
+        /// "cycle_iter_value" represents actual iter_lim
+        field->log_color_cycle_iters = Math::linear_log1p_lerp(iter_params.cycle_iter_value, iter_params.cycle_iter_log1p_weight);
+    }
 
     field->cycle_dist_value = dist_params.cycle_dist_value;
 
@@ -904,7 +890,7 @@ template<typename T>
 void refreshFieldDepthNormalized(
     EscapeField* pending_field,
     CanvasImage128* pending_bmp,
-    MandelSmoothing smoothing_type,
+    MandelKernelFeatures smoothing_type,
     const IterParams& iter_params,
     const DistParams& dist_params,
     ///[[maybe_unused]] bool   cycle_iter_normalize_depth,
@@ -928,25 +914,33 @@ void refreshFieldDepthNormalized(
         if (depth >= INSIDE_MANDELBROT_SET_SKIPPED || field_pixel.flag_for_skip) return;
 
         /// ====== ITER =======
-        //double low_ratio = iter_params.cycle_iter_normalize_low_fact / 100.0;
-        //double high_ratio = iter_params.cycle_iter_normalize_high_fact / 100.0;
+        //double low_ratio = 0.25;
+        //double high_ratio = 0.5;
         //double floor_depth = iter_params.cycle_iter_normalize_depth ? (pending_field->min_depth * low_ratio) : 0;
         //double ceil_depth = iter_params.cycle_iter_normalize_depth ? (pending_field->max_depth * high_ratio) : 0;
 
-        double log_depth = Math::linear_log1p_lerp(depth, iter_params.cycle_iter_log1p_weight);
-        double assumed_log_depth_min = Math::linear_log1p_lerp(pending_field->assumed_iter_min, iter_params.cycle_iter_log1p_weight);
-        double assumed_log_depth_max = Math::linear_log1p_lerp(pending_field->assumed_iter_max, iter_params.cycle_iter_log1p_weight);
+        f64 final_depth;
+        
+        if (iter_params.cycle_iter_normalize_depth)
+        {
+            //f64 assumed_log_depth_min = Math::linear_log1p_lerp(pending_field->assumed_iter_min,  iter_params.cycle_iter_log1p_weight);
+            //f64 assumed_log_depth_max = Math::linear_log1p_lerp(pending_field->assumed_iter_max,  iter_params.cycle_iter_log1p_weight);
+
+            final_depth = Math::linear_log1p_lerp(depth - pending_field->min_depth, iter_params.cycle_iter_log1p_weight);
+        }
+        else
+            final_depth = Math::linear_log1p_lerp(depth, iter_params.cycle_iter_log1p_weight);
+
+        //double floor_depth = iter_params.cycle_iter_normalize_depth ? pending_field->assumed_iter_min : 0;
 
         //double depth_window = pending_field->assumed_iter_max - pending_field->assumed_iter_min;
-        double normalized_log_depth = iter_params.cycle_iter_normalize_depth ?
-            wrap_range(log_depth, assumed_log_depth_min, assumed_log_depth_max)
-            : log_depth;
+        ///double normalized_log_depth = iter_params.cycle_iter_normalize_depth ?
+        ///    wrap_range(log_depth, assumed_log_depth_min, assumed_log_depth_max)
+        ///    : log_depth;
 
-        //double floor_depth = cycle_iter_normalize_depth ? pending_field->assumed_iter_min : 0;
-        //double floor_depth = cycle_iter_normalize_depth ? assumed_iter_min : 0;
 
         //float final_depth = (float)Math::linear_log1p_lerp(std::max(-0.99999, depth - floor_depth), iter_params.cycle_iter_log1p_weight);
-        float final_depth = (float)normalized_log_depth;// (float)Math::linear_log1p_lerp(std::max(-0.99999, normalized_depth), iter_params.cycle_iter_log1p_weight);
+        //float final_depth = (float)normalized_log_depth;// (float)Math::linear_log1p_lerp(std::max(-0.99999, normalized_depth), iter_params.cycle_iter_log1p_weight);
 
         /// ====== DIST =======
         T raw_dist = field_pixel.getDist<T>();
@@ -954,7 +948,7 @@ void refreshFieldDepthNormalized(
             raw_dist = std::numeric_limits<T>::epsilon();
 
         // raw_dist is highest next to mandelbrot set
-        T dist = ((int)smoothing_type & (int)MandelSmoothing::DIST) ?
+        T dist = ((int)smoothing_type & (int)MandelKernelFeatures::DIST) ?
             ((dist_params.cycle_dist_invert ? T{-1.0} : T{1.0}) * log(raw_dist))
             : T{0};
 
@@ -974,7 +968,7 @@ void refreshFieldDepthNormalized(
         else
             final_stripe = (float)Math::lerpFactor<T>(stripe, (T)pending_field->min_stripe, (T)pending_field->max_stripe);
 
-        field_pixel.final_depth = final_depth;
+        field_pixel.final_depth = (f32)final_depth;
         field_pixel.final_dist = final_dist;
         field_pixel.final_stripe = final_stripe;
     }, threads);

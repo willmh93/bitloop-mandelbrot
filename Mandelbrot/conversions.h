@@ -26,9 +26,10 @@ inline f128 fromHeight(f128 height)
 
 inline int mandelbrotIterLimit(f128 zoom)
 {
-    const f128 l = log10(zoom * 400.0);
-    int iters = static_cast<int>(-19.35 * l * l + 741.0 * l - 1841.0);
-    return (100 + (std::max(0, iters))) * 3;
+    return (int)(std::max((f128)1, log10(zoom)) * (f128)2000.0);
+    //const f128 l = log10(zoom * 400.0);
+    //int iters = static_cast<int>(-19.35 * l * l + 741.0 * l - 1841.0);
+    //return (100 + (std::max(0, iters))) * 3;
 }
 
 inline double qualityFromIterLimit(int iter_lim, f128 zoom)

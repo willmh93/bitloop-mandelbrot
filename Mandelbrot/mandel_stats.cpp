@@ -9,9 +9,12 @@ void Mandelbrot_Scene::collectStats()
 
     memset(&stats.dirty, 0, sizeof(stats.dirty));
 
+    double trimmed_min_depth = field.min_depth, trimmed_max_depth = field.max_depth;
+
     // Depth Histogram
+    for (int k=0; k<2; k++)
     {
-        int bucket_size = std::max(1, (int)((field.max_depth - field.min_depth) / 1000.0));
+        int bucket_size = std::max(1, (int)((trimmed_max_depth - trimmed_min_depth) / 500.0));
         if (bucket_size > 0)
         {
             auto& hist = stats.depth_histogram;
@@ -64,6 +67,8 @@ void Mandelbrot_Scene::collectStats()
                     if (hist.count(bucket_depth) == 0)
                         hist[bucket_depth] = 0;
                 }
+
+                trimmed_max_depth = max_depth;
             }
             stats.dirty.depth_histogram = true;
         }

@@ -223,6 +223,7 @@ void Mandelbrot_Scene::UI::populateExamples()
                         {
                             // Give destination same reference zoom level
                             MandelState target;
+                            target.camera.setReferenceZoom(scene.camera.getReferenceZoom<f128>());
                             target.deserialize(data);
                             scene.startTween(target);
                         });
@@ -392,19 +393,6 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
 
             ImGui::Checkbox("Smooth", &use_smoothing);
             ImGui::Checkbox("Normalize to Zoom", &iter_params.cycle_iter_normalize_depth);
-
-            if (iter_params.cycle_iter_normalize_depth)
-            {
-                if (iter_params.cycle_iter_normalize_depth)
-                {
-                    ImGui::SliderDouble("Low %", &iter_params.cycle_iter_normalize_low_fact, 0.001, 100.0, "%.4f%%", ImGuiSliderFlags_AlwaysClamp);
-                    ImGui::SliderDouble("High %", &iter_params.cycle_iter_normalize_high_fact, 0.001, 100.0, "%.4f%%", ImGuiSliderFlags_AlwaysClamp);
-                }
-                else
-                {
-
-                }
-            }
 
 
             float required_space = 0.0f;
@@ -614,7 +602,7 @@ void Mandelbrot_Scene::UI::populateStats()
             // float precision
             {
 
-                const char* float_precision = FloatingPointTypeNames[(int)getRequiredFloatType((MandelSmoothing)smoothing_type, camera.relativeZoom<f128>())];
+                const char* float_precision = FloatingPointTypeNames[(int)getRequiredFloatType((MandelKernelFeatures)smoothing_type, camera.relativeZoom<f128>())];
                 ImGui::Text("Active float precision:  %s", float_precision);
             }
 
@@ -642,17 +630,15 @@ void Mandelbrot_Scene::UI::populateStats()
             
             // mouse pixel info
             {
-                ImGui::Text("Mouse info:");
-
                 if (stats.hovered_field_pixel.depth < INSIDE_MANDELBROT_SET_SKIPPED)
                 {
-                    ImGui::Text("Mouse depth: %.0f iterations", stats.hovered_field_pixel.depth);
-                    ImGui::Text("Log depth: %.2f iterations", stats.hovered_field_pixel.final_depth);
+                    ImGui::Text("Mouse depth:        %.1f iterations", stats.hovered_field_pixel.depth);
+                    ImGui::Text("Mouse depth (norm): %.4f iterations", stats.hovered_field_pixel.final_depth);
                 }
                 else
                 {
-                    ImGui::Text("Mouse depth: <escaped> iterations");
-                    ImGui::Text("Log depth: <escaped> iterations");
+                    ImGui::Text("Mouse depth:        <interior>");
+                    ImGui::Text("Mouse depth (norm): <interior>");
                 }
             }
         }
@@ -663,20 +649,21 @@ void Mandelbrot_Scene::UI::populateStats()
 
         // depth histogram
         {
-            depth_xs.reserve(stats.depth_histogram.size());
-            depth_ys.reserve(stats.depth_histogram.size());
-            depth_xs.clear();
-            depth_ys.clear();
-
-            for (const auto& [k, v] : stats.depth_histogram)
-            {
-                //if (v <= 1) continue; // Hide very small counts
-                depth_xs.push_back(k);
-                depth_ys.push_back(v);
-            }
 
             if (ImPlot::BeginPlot("Depth Histogram"))
             {
+                depth_xs.reserve(stats.depth_histogram.size());
+                depth_ys.reserve(stats.depth_histogram.size());
+                depth_xs.clear();
+                depth_ys.clear();
+
+                for (const auto& [k, v] : stats.depth_histogram)
+                {
+                    //if (v <= 1) continue; // Hide very small counts
+                    depth_xs.push_back(k);
+                    depth_ys.push_back(v);
+                }
+
                 ImPlot::SetupAxis(ImAxis_X1, "depth", ImPlotAxisFlags_AutoFit);
                 ImPlot::SetupAxis(ImAxis_Y1, "pixel count", ImPlotAxisFlags_AutoFit);
                 ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
@@ -701,6 +688,29 @@ void Mandelbrot_Scene::UI::populateStats()
                 ImPlot::EndPlot();
             }
         }
+
+        // zoom - max_depth graph
+        /*{
+            if (ImPlot::BeginPlot("Max depth"))
+            {
+                max_depth_xs.clear();
+                max_depth_ys.clear();
+                int i = 1;
+                for (double z = 1; z < 1e30; z *= 10)
+                {
+                    double max_depth = mandelbrotIterLimit(z);
+                    max_depth_xs.push_back(i);
+                    max_depth_ys.push_back(max_depth);
+                    i++;
+                }
+                ImPlot::SetupAxis(ImAxis_X1, "zoom e10", ImPlotAxisFlags_AutoFit);
+                ImPlot::SetupAxis(ImAxis_Y1, "max iter", ImPlotAxisFlags_AutoFit);
+                //ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
+                //ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
+                ImPlot::PlotLine("##maxdepth_graph", max_depth_xs.data(), max_depth_ys.data(), (int)max_depth_xs.size());
+                ImPlot::EndPlot();
+            }
+        }*/
     }
 }
 

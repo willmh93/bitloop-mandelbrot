@@ -191,15 +191,15 @@ void Mandelbrot_Scene::updateFieldSizes(Viewport* ctx)
     field_1x1.setDimensions(iw, ih);
 }
 
-void Mandelbrot_Scene::updateKernelMode(bool mandel_changed)
+void Mandelbrot_Scene::updateEnabledKernelFeatures(bool mandel_changed)
 {
     constexpr double eps = std::numeric_limits<double>::epsilon();
     int old_smoothing = smoothing_type;
     int new_smoothing = 0;
 
-    if (iter_weight > eps)   new_smoothing |= (int)MandelSmoothing::ITER;
-    if (dist_weight > eps)   new_smoothing |= (int)MandelSmoothing::DIST;
-    if (stripe_weight > eps) new_smoothing |= (int)MandelSmoothing::STRIPES;
+    if (iter_weight > eps)   new_smoothing |= (int)MandelKernelFeatures::ITER;
+    if (dist_weight > eps)   new_smoothing |= (int)MandelKernelFeatures::DIST;
+    if (stripe_weight > eps) new_smoothing |= (int)MandelKernelFeatures::STRIPES;
 
     bool force_upgrade = new_smoothing & ~old_smoothing;
     bool downgrade_on_change = ~new_smoothing & old_smoothing;
@@ -211,7 +211,7 @@ void Mandelbrot_Scene::updateKernelMode(bool mandel_changed)
     }
 }
 
-void Mandelbrot_Scene::updateActiveField(bool mandel_changed)
+void Mandelbrot_Scene::updateActivePhaseAndField(bool mandel_changed)
 {
     // ────── Presented Mandelbrot *actually* changed? Restart on 9x9 bmp (phase 0) ──────
     if (mandel_changed)
@@ -395,8 +395,8 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     //if (mandel_changed)
     //    savefile_changed = true;
 
-    updateKernelMode(mandel_changed);
-    updateActiveField(mandel_changed);
+    updateEnabledKernelFeatures(mandel_changed);
+    updateActivePhaseAndField(mandel_changed);
 
     // Do compute if mandel changed
     // ────── do compute (if mandel changed) ──────

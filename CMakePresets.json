@@ -1,6 +1,10 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": {"major": 3, "minor": 21, "patch": 0},
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
 
   "configurePresets": [
     {
@@ -86,10 +90,25 @@
     }
   ],
   "buildPresets": [
-    { "name": "ninja-debug",               "configurePreset": "ninja-debug" },
-    { "name": "ninja-release",             "configurePreset": "ninja-release" },
-    { "name": "wasm32-debug",              "configurePreset": "wasm32-debug" },
-    { "name": "wasm32-release",            "configurePreset": "wasm32-release" },
-    { "name": "wasm32-release-debug-info", "configurePreset": "wasm32-release-debug-info" }
+    {
+      "name": "ninja-debug",
+      "configurePreset": "ninja-debug"
+    },
+    {
+      "name": "ninja-release",
+      "configurePreset": "ninja-release"
+    },
+    {
+      "name": "wasm32-debug",
+      "configurePreset": "wasm32-debug"
+    },
+    {
+      "name": "wasm32-release",
+      "configurePreset": "wasm32-release"
+    },
+    {
+      "name": "wasm32-release-debug-info",
+      "configurePreset": "wasm32-release-debug-info"
+    }
   ]
 }

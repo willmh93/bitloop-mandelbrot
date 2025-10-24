@@ -8,22 +8,25 @@ struct MandelStats
     // dirty flags for different stats
     struct {
         bool depth_histogram = false;      // {1}
-        bool hovered_field_pixel = false;  // {2}
-        //bool phase_info = false;         // {3}
+        bool field_info = false;           // {2}
+        bool hovered_field_pixel = false;  // {3}
     } dirty;
 
+    struct FieldInfo
+    {
+        double min_depth,     max_depth;                      // true min/max field depth
+        double min_log_depth, max_log_depth;                  // lerped log of true min/max depth
+        double assumed_min_depth, assumed_max_depth;          // for current zoom, rough "estimated" min/max depth
+        double assumed_log_min_depth, assumed_log_max_depth;  // for current zoom, lerped log of rough "estimated" min/max depth
+    };
 
     // {1} bucket_depth ==> pixel count
     std::map<int, int> depth_histogram;
 
-    // {2} mandelbrot stats for the pixel the mouse is hovered over
+    FieldInfo field_info;
+
+    // {3} mandelbrot stats for the pixel the mouse is hovered over
     EscapeFieldPixel hovered_field_pixel;
-    ///struct LiveInputInfo
-    ///{
-    ///    double mouse_depth;
-    ///    double mouse_dist;
-    ///    double mouse_angle;
-    ///} live_input_info;
 
     // Check if any flags are dirty
     bool operator==(const MandelStats& rhs) const {
@@ -33,6 +36,7 @@ struct MandelStats
     MandelStats& operator=(const MandelStats& rhs)
     {
         if (rhs.dirty.depth_histogram)      depth_histogram = rhs.depth_histogram;
+        if (rhs.dirty.field_info)           field_info = rhs.field_info;
         if (rhs.dirty.hovered_field_pixel)  hovered_field_pixel = rhs.hovered_field_pixel;
 
         return *this;

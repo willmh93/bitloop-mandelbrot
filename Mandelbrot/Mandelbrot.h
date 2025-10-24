@@ -200,6 +200,7 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 
         // stats
         std::vector<int> depth_xs, depth_ys;
+        //std::vector<double> max_depth_xs, max_depth_ys;
     };
 
     // ────── simulation processing ──────
@@ -212,8 +213,8 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     void updateGradient();
     void updateCameraView();
     void updateFieldSizes(Viewport* ctx);
-    void updateKernelMode(bool mandel_changed);
-    void updateActiveField(bool mandel_changed);
+    void updateEnabledKernelFeatures(bool mandel_changed);
+    void updateActivePhaseAndField(bool mandel_changed);
     bool shouldCompute(bool mandel_changed);
     bool processCompute();
 
