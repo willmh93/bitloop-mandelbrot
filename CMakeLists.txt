@@ -23,8 +23,14 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
 		target_compile_options(Mandelbrot PRIVATE -mavx2 -mfma -ffp-contract=fast -ffast-math -fno-math-errno)
 	endif()
 else()
-  target_compile_options(Mandelbrot PRIVATE -mavx2 -mfma -ffp-contract=fast -ffast-math -fno-math-errno)
-  #target_compile_options(Mandelbrot PRIVATE -ffast-math)
+	target_compile_options(Mandelbrot PRIVATE
+		-O3 -flto
+		-msimd128
+		-mrelaxed-simd
+		-ffast-math
+		-ffp-contract=fast
+		-fno-math-errno
+	)
 endif()
 
 
