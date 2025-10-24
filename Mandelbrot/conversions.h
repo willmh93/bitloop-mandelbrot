@@ -45,12 +45,12 @@ inline int finalIterLimit(
     bool tweening)
 {
     if (dynamic_iter_lim)
-        return (int)(mandelbrotIterLimit(camera.getRelativeZoom<f128>()) * quality);
+        return (int)(mandelbrotIterLimit(camera.relativeZoom<f128>()) * quality);
     else
     {
         int iters = (int)(quality);
         if (tweening)
-            iters = std::min(iters, (int)(mandelbrotIterLimit(camera.getRelativeZoom<f128>()) * 0.25f));
+            iters = std::min(iters, (int)(mandelbrotIterLimit(camera.relativeZoom<f128>()) * 0.25f));
         return iters;
     }
 }
@@ -66,15 +66,6 @@ inline void shadingRatios(
     iter_ratio   = iter_weight / sum;
     dist_ratio   = dist_weight / sum;
     stripe_ratio = stripe_weight / sum;
-}
-
-inline std::string dataToURL(std::string config_buf)
-{
-    #ifdef __EMSCRIPTEN__
-    return platform()->url_get_base() + "?data=" + config_buf;
-    #else
-    return "https://bitloop.dev/Mandelbrot?data=" + config_buf;
-    #endif
 }
 
 SIM_END;

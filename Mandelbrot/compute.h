@@ -833,8 +833,8 @@ void normalize_shading_limits(
     double low_ratio = iter_params.cycle_iter_normalize_low_fact / 100.0;
     double high_ratio = iter_params.cycle_iter_normalize_high_fact / 100.0;
     //field->assumed_iter_min = mandelbrotIterLimit(cam_view.zoom) * low_ratio;
-    field->assumed_iter_min = mandelbrotIterLimit(camera.getRelativeZoom<f128>()) * low_ratio;
-    field->assumed_iter_max = mandelbrotIterLimit(camera.getRelativeZoom<f128>()) * high_ratio;
+    field->assumed_iter_min = mandelbrotIterLimit(camera.relativeZoom<f128>()) * low_ratio;
+    field->assumed_iter_max = mandelbrotIterLimit(camera.relativeZoom<f128>()) * high_ratio;
 
 
     // Calculate normalized depth/dist

@@ -6,9 +6,6 @@
 #if MANDEL_DEV_MODE //&& defined(BL_DEBUG)
 
     /// ──────  Enabled Dev Options ──────
-#define MANDEL_DEV_PRINT_ACTIVE_FLOAT_TYPE          0
-#define MANDEL_DEV_PRINT_ACTIVE_COMPUTE_FEATURES    0
-#define MANDEL_DEV_PERFORMANCE_TIMERS               0
 #define MANDEL_DEV_EDIT_TWEEN_SPLINES               0
 #define MANDEL_DEV_HIGHLIGHT_MAXDEPTH_FORWARDING    1
 

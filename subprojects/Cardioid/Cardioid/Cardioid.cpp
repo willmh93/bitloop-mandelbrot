@@ -36,7 +36,7 @@ void plot(const SceneBase *scene, Viewport* ctx, bool interactive, int segments,
     if (interactive)
     {
         double tx1, ty1, tx2, ty2, ta, oa, d;
-        cardioidPolarCoord(scene->mouse->world_x, scene->mouse->world_y, tx1, ty1, ta, d, oa);
+        cardioidPolarCoord((f64)scene->mouse->world_x, (f64)scene->mouse->world_y, tx1, ty1, ta, d, oa);
 
         ctx->scalingSizes(true);
 
@@ -307,7 +307,7 @@ void Cardioid_Scene::viewportDraw(Viewport* ctx) const
         if (interactive)
         {
             double tx1, ty1, ta, oa, d;
-            cardioidPolarCoord(mouse->world_x, mouse->world_y, tx1, ty1, ta, d, oa);
+            cardioidPolarCoord((f64)mouse->world_x, (f64)mouse->world_y, tx1, ty1, ta, d, oa);
 
             fullPlot(ctx, 1, ox);
             animatePlot(ctx, 1, ox, oa, d);
@@ -334,7 +334,7 @@ void Cardioid_Scene::viewportDraw(Viewport* ctx) const
                 ctx->fillEllipse(p.x, p.y, 5.0);
 
                 // Mouse project test (should follow mouse)
-                DVec2 p2 = cumulative_cardioid_lookup.originalPolarCoordinate(mouse->world_x, mouse->world_y, interact_spin_mult);
+                DVec2 p2 = cumulative_cardioid_lookup.originalPolarCoordinate((f64)mouse->world_x, (f64)mouse->world_y, interact_spin_mult);
                 DVec2 p3 = cumulative_cardioid_lookup.project(p2.x, p2.y, interact_spin_mult);
 
                 ctx->setFillStyle(255, 0, 0);

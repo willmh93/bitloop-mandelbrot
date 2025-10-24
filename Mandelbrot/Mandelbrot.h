@@ -4,73 +4,30 @@
 
 #include "Cardioid/Cardioid.h"
 
-
 // Mandelbrot includes
 #include "build_config.h"
 
 #include "types.h"
-#include "state.h"
+#include "mandel_state.h"
 #include "compute.h"
 #include "shading.h"
+#include "gradient.h"
 #include "tween_splines.h"
 #include "examples.h"
+#include "mandel_stats.h"
 
 SIM_BEG;
 
 using namespace bl;
 
-struct MandelStats
-{
-    struct {
-        bool depth_histogram = false;
-        bool mouse_info = false;
-    } dirty;
-
-    struct LiveInputInfo
-    {
-        double mouse_depth;
-        double mouse_dist;
-        double mouse_angle;
-    } live_input_info;
-
-    // pixel count per depth bucket
-    std::map<int, int> depth_histogram;
-
-    // Check if any flags are dirty
-    bool operator==(const MandelStats& rhs) const {
-        // todo: Shouldn't really be needed, but returning 'false' every time causes a freeze which shouldn't happen.
-        //       This must be because syncing "everything else" is paused as long as "something is changing" which
-        //       really points to an issue with your VarBuffer solution. One variable should be able to sync
-        //       indefinitely both ways without freezing the whole app. You did do it that way for a reason though...
-        //       predictable cause and affect. e.g. Syncing isn't back-forth-back-forth, UI runs more often than Live,
-        //       so when the live buffer gets changed, the UI can just override it before it has a chance to sync.
-        //
-        //        if (!shadow_changed)
-        //            pushDataToShadow(); // If shadow is *always* changing, no live data EVER gets send to it. Maybe
-        //                                   experiment with doing this per-variable again (which wouldn't fix this issue,
-        //                                   but would prevent the bug from leaking to other variables). A real fix would
-        //                                   be to somehow fix the order of syncs when a render or worker frame is about
-        //                                   to occur
-        //
-        return memcmp(&dirty, &rhs.dirty, sizeof(dirty)) == 0;
-    }
-
-    MandelStats& operator=(const MandelStats& rhs)
-    {
-        if (rhs.dirty.depth_histogram)  depth_histogram = rhs.depth_histogram;
-        if (rhs.dirty.mouse_info)       live_input_info = rhs.live_input_info;
-
-        return *this;
-    }
-};
 
 
 //  ──────  MandelState inheritance  ────── 
-//  Lerp between 'state_a' --> 'state_b' => Save result in inherited "live" MandelState
+//  Lerp between state_a ─> state_b saves result in "this" inherited MandelState
 
 struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 {
-    // ──────  Config ──────
+    // ────── config ──────
     struct Config { std::string load_example_name; };
     Mandelbrot_Scene(Config& config) : load_example_name(config.load_example_name) {}
 
@@ -78,49 +35,34 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 
     std::string load_example_name;
 
-    // ────── Threads ──────
+    // ────── threads ──────
     static constexpr int MAX_THREADS = 0; // 0 = Use max threads
     inline int numThreads() const {
         if constexpr (MAX_THREADS > 0) return MAX_THREADS;
         return Thread::idealThreadCount();
     }
 
-    // ────── Resources ──────
+    // ────── resources ──────
     NanoFont font;
 
-    // ────── Tweening ──────
-    bool   tweening = false;
-    double tween_progress = 0.0; // 0..1
-    f128 tween_lift{ 0.0 };
-    double tween_duration = 0.0;
+    // ────── tweening ──────
+    bool tweening = false;
+    f64  tween_progress = 0; // 0..1
+    f64  tween_duration = 0;
+    f128 tween_lift = 0;
 
-    MandelState state_a;
-    MandelState state_b;
+    MandelState  state_a;
+    MandelState  state_b;
     DDAngledRect tween_r1;
     DDAngledRect tween_r2;
 
-    f128 reference_zoom;
-    DDVec2 ctx_stage_size;
-
-    DDVec2 stageWorldSize() const { return ctx_stage_size / reference_zoom; }
+    // For any given MandelState, we need a way of predicting what the destination world-quad will be for tweening.
+    // That means we need to use the active viewport size + the target MandelState's camera info.
     DDAngledRect getAngledRect(const MandelState& s) const {
-        return DDAngledRect(s.pos_128(), stageWorldSize() / s.camera.getRelativeZoom<f128>(), (f128)s.cam_angle());
+        return DDAngledRect(s.camera.pos<f128>(), camera.viewportWorldSize<f128>(), (f128)s.camera.rotation());
     }
 
-    // ────── Cardioid ──────
-    bool show_period2_bulb = true;
-
-    #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
-    bool show_interactive_cardioid = false;
-    bool   animate_cardioid_angle = true;
-    double ani_angle = 0.0;
-    double ani_inc = Math::toRadians(2.0);
-    #endif
-
-    double cardioid_lerp_amount = 1.0; // 1 - flatten
-    Cardioid::CardioidLerper cardioid_lerper;
-
-    // ────── Gradients ──────
+    // ────── gradients ──────
     ImGradient gradient_shifted;
 
 
@@ -132,18 +74,21 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     ImSpline::Spline tween_base_zoom_spline = MandelSplines::tween_base_zoom_spline;
     ImSpline::Spline tween_color_cycle      = MandelSplines::tween_color_cycle;
 
-    // ────── Saving & loading / URL ──────
-    std::string config_buf = ""; // data for text box (save data / url)
-    void updateConfigBuffer();
-    void loadConfigBuffer();
+    // ────── saving & loading / URL ──────
+    //std::string data_buf = ""; // data for text box (save data / url)
+    //void updateConfigBuffer() { data_buf = serialize(); }
+    //void loadConfigBuffer()   { deserialize(data_buf);  }
 
-    void onSavefileChanged();
+    std::string getStateData() const { return serialize(); }
+    void loadState(std::string data) { deserialize(data); }
+
+    //void onSavefileChanged();
     std::string getURL() const;
 
-    // ────── Fields & Bitmaps ──────
-    EscapeField field_9x9 = EscapeField(0); // Processed in a single frame (fast)
-    EscapeField field_3x3 = EscapeField(1); // Processed over multiple frames
-    EscapeField field_1x1 = EscapeField(2); // Processed over multiple frames
+    // ────── fields & bitmaps ──────
+    EscapeField field_9x9 = EscapeField(0); // processed in a single frame (fast)
+    EscapeField field_3x3 = EscapeField(1); // processed over multiple frames
+    EscapeField field_1x1 = EscapeField(2); // processed over multiple frames
 
     CanvasImage128 bmp_9x9;
     CanvasImage128 bmp_3x3;
@@ -157,7 +102,7 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 
     MandelStats stats;
 
-    // ────── Dynamicly set at runtime ──────
+    // ────── dynamicly set at runtime ──────
     bool    display_intro = true;
     double  log_color_cycle_iters = 0.0;
     int     iter_lim = 0; // Actual iter limit
@@ -165,34 +110,35 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     DDQuad  world_quad{};
     int     current_row = 0;
 
-    // Phase 0 = 9x smaller
-    // Phase 1 = 3x smaller
-    // Phase 2 = full resolution
+    // phase 0 = 9x smaller
+    // phase 1 = 3x smaller
+    // phase 2 = full resolution
     int  computing_phase = 0;
     bool first_frame = true;
     bool frame_complete = false;  // Similar to finished_compute, but not cleared until next compute starts
     bool final_frame_complete = true;
 
-    // ────── Expensive Interior "forwarding" optimization ──────
+    // ────── expensive interior "forwarding" optimization ──────
     struct {
         int c1 = 5, e1 = 3, c2 = 7, e2 = 3;
     }  interior_phases_contract_expand;
 
     bool maxdepth_show_optimized = false;
 
-    // ────── Computing / Shading ──────
+    // ────── computing / shading ──────
     bool compute_mandelbrot(EscapeField* field, CanvasImage128* bmp);
     void normalize_field(EscapeField* field, CanvasImage128* bmp);
 
-    // ────── Timers ──────
-    #ifdef MANDEL_DEV_PERFORMANCE_TIMERS
+    // ────── timers ──────
     std::chrono::steady_clock::time_point compute_t0;
     Math::MovingAverage::MA<double> timer_ma = Math::MovingAverage::MA<double>(1);
     double dt_avg = 0;
-    #endif
 
-    // ────── Camera navigation easing ──────
-    //Camera          camera;
+    // ────── tweening ──────
+    void startTween(const MandelState& target);
+    void lerpState(const MandelState& a, const MandelState& b, double f, bool complete);
+
+    // ────── camera navigation easing ──────
     CameraNavigator navigator;
 
     Math::MovingAverage::MA<DDVec2> avg_vel_pos = Math::MovingAverage::MA<DDVec2>(8);
@@ -201,44 +147,82 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     DDVec2 camera_vel_pos{};
     double camera_vel_zoom{1};
 
-    // ────── Deep Zoom Animation (temporary until timeline feature added) ──────
+    // ────── deep-zoom animation (temporary until timeline feature added) ──────
     bool steady_zoom = false;
     f128 steady_zoom_mult_speed{ 0.01 };
     int tween_frames_elapsed = 0;
     int tween_expected_frames = 0;
     Math::MovingAverage::MA<double> expected_time_left_ma = Math::MovingAverage::MA<double>(5);
 
+    // ────── cardioid ──────
+    bool show_period2_bulb = true;
 
-    // ────── User Interface ──────
+    #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
+    bool show_interactive_cardioid = false;
+    bool   animate_cardioid_angle = true;
+    double ani_angle = 0.0;
+    double ani_inc = Math::toRadians(2.0);
+    #endif
+
+    double cardioid_lerp_amount = 1.0; // 1 - flatten
+    Cardioid::CardioidLerper cardioid_lerper;
+
+    // ────── user interface ──────
     struct UI : Interface
     {
         using Interface::Interface;
         void sidebar();
 
+        // UI sections
+        void populateSavingLoading();
+        void populateExamples();
+        void populateCameraView();
+        void populateQualityOptions();
+        void populateColorCycleOptions();
+        void populateGradientShiftOptions();
+        void populateGradientPicker();
+        void populateStats();
+
+        void populateExperimental();
+        void populateSplinesDev();
+
+        // dialog flags
         bool show_save_dialog = false;
         bool show_load_dialog = false;
         bool show_share_dialog = false;
-
-        std::string url;
-
         #ifdef __EMSCRIPTEN__
         bool opening_load_popup = false;
         #endif
 
-        std::vector<int> xs, ys;
+        // textbox buffers
+        std::string url_buf;
+        std::string data_buf;
+
+        // stats
+        std::vector<int> depth_xs, depth_ys;
     };
 
-    // ────── Simulation processing ──────
+    // ────── simulation processing ──────
     void sceneStart() override;
     void sceneMounted(Viewport* viewport) override;
 
-    // ────── Viewport handling ──────
+    // ────── viewport handling ──────
+    void updateAnimation();
+    void updateTweening(double dt);
+    void updateGradient();
+    void updateCameraView();
+    void updateFieldSizes(Viewport* ctx);
+    void updateKernelMode(bool mandel_changed);
+    void updateActiveField(bool mandel_changed);
+    bool shouldCompute(bool mandel_changed);
+    bool processCompute();
+
     void viewportProcess(Viewport* ctx, double dt) override;
     void viewportDraw(Viewport* ctx) const override;
 
     void collectStats();
 
-    // ────── Input ──────
+    // ────── input ──────
     void onEvent(Event e) override;
 };
 

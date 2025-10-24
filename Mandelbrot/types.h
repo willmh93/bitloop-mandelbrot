@@ -25,9 +25,9 @@ enum MandelFlag : uint32_t
     MANDEL_USE_SMOOTHING        = 1u << 6,
 
     // bitmasks
-    MANDEL_FLAGS_MASK = 0x000FFFFFu, // max 24 bit-flags
-    MANDEL_SMOOTH_MASK = 0x00F00000u, // max 16 smooth types
-    MANDEL_VERSION_MASK = 0xFF000000u, // max 255 versions
+    //MANDEL_FLAGS_MASK   = 0x000FFFFFu, // max 24 bit-flags
+    //MANDEL_SMOOTH_MASK  = 0x00F00000u, // max 16 smooth types
+    MANDEL_VERSION_MASK   = 0xFF000000u, // max 255 versions
 
     MANDEL_VERSION_BITSHIFT = 24
 };
@@ -52,9 +52,9 @@ static inline const char* MandelMaxDepthOptimizationNames[(int)MandelMaxDepthOpt
 
 static inline const char* FloatingPointTypeNames[3] =
 {
-    "F32",
-    "F64",
-    "F128"
+    "32-bit",
+    "64-bit",
+    "128-bit (quad-precision)"
 };
 
 struct IterParams
@@ -96,7 +96,7 @@ struct StripeParams
 
 struct EscapeFieldPixel
 {
-    double depth;
+    f64 depth;
 
     union
     {
@@ -112,6 +112,7 @@ struct EscapeFieldPixel
         f128 stripe_128;
     };
 
+    // todo: Reuse above vars to save space
     f32 final_depth;
     f32 final_dist;
     f32 final_stripe;
@@ -134,44 +135,6 @@ struct EscapeFieldPixel
     template<typename T> requires std::same_as<T, f64>  constexpr T getStripe() { return stripe_64; }
     template<typename T> requires std::same_as<T, f128> constexpr T getStripe() { return stripe_128; }
 };
-
-// ---- fast disk kernel (reuse between calls) ----
-struct DiskKernel {
-    int r = 0;
-    std::vector<std::pair<int, int>> ofs;
-    void set(int radius) {
-        if (radius == r) return;
-        r = radius; ofs.clear();
-        int r2 = r * r;
-        for (int dy = -r; dy <= r; ++dy)
-            for (int dx = -r; dx <= r; ++dx)
-                if (dx * dx + dy * dy <= r2) ofs.emplace_back(dx, dy);
-    }
-};
-
-static inline uint8_t sample(const std::vector<uint8_t>& a, int w, int h, int x, int y) {
-    return (x >= 0 && y >= 0 && x < w && y < h) ? a[(size_t)y * w + x] : 0;
-}
-
-// disk dilate/erode using the precomputed offsets
-static inline uint8_t dilate_at_disk(const std::vector<uint8_t>& in, int w, int h,
-    int x, int y, const DiskKernel& K)
-{
-    for (auto [dx, dy] : K.ofs) {
-        int xx = x + dx, yy = y + dy;
-        if (xx >= 0 && yy >= 0 && xx < w && yy < h && in[(size_t)yy * w + xx]) return 1;
-    }
-    return 0;
-}
-static inline uint8_t erode_at_disk(const std::vector<uint8_t>& in, int w, int h,
-    int x, int y, const DiskKernel& K)
-{
-    for (auto [dx, dy] : K.ofs) {
-        int xx = x + dx, yy = y + dy;
-        if (xx < 0 || yy < 0 || xx >= w || yy >= h || !in[(size_t)yy * w + xx]) return 0;
-    }
-    return 1;
-}
 
 struct EscapeField : public std::vector<EscapeFieldPixel>
 {
@@ -328,25 +291,6 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
     }
 
 private:
-
-
-    /*inline uint8_t erode_at(const std::vector<uint8_t>& in, int w, int h, int x, int y, int r)
-    {
-        const int r2 = r * r;
-        for (int dy = -r; dy <= r; ++dy)
-        {
-            int yy = y + dy;
-            for (int dx = -r; dx <= r; ++dx)
-            {
-                if (dx * dx + dy * dy > r2) continue;           // outside the disk
-                int xx = x + dx;
-                if (xx < 0 || yy < 0 || xx >= w || yy >= h) return 0; // treat OOB as 0
-    
-                if (!in[yy * w + xx]) return 0;
-            }
-        }
-        return 1;
-    }*/
 
     inline uint8_t dilate_at(const std::vector<uint8_t>& in, int w, int h, int x, int y, int r)
     {
