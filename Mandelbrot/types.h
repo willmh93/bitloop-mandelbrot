@@ -60,10 +60,10 @@ static inline const char* FloatingPointTypeNames[3] =
 struct IterParams
 {
     double  cycle_iter_weight = 0.0;
-    bool    cycle_iter_dynamic_limit = true;
-    bool    cycle_iter_normalize_depth = true;
-    double  cycle_iter_log1p_weight = 0.0;
-    double  cycle_iter_value = 0.5f; // If dynamic, iter_lim ratio, else iter_lim
+    bool    cycle_iter_dynamic_limit = false;
+    bool    cycle_iter_normalize_depth = false;
+    double  cycle_iter_log1p_weight = 1.0;
+    double  cycle_iter_value = 1.0f; // If dynamic, iter_lim ratio, else iter_lim
 
     bool operator==(const IterParams&) const = default;
 };

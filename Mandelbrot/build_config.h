@@ -7,7 +7,6 @@
 
     /// ──────  Enabled Dev Options ──────
 #define MANDEL_DEV_EDIT_TWEEN_SPLINES               0
-#define MANDEL_DEV_HIGHLIGHT_MAXDEPTH_FORWARDING    1
 
 #endif
 

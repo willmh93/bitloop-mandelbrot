@@ -31,6 +31,10 @@ void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
     camera.focusWorldRect(-2, -1.25, 1, 1.25);
     camera.uiSetCurrentAsDefault();
 
+    bmp_9x9.setCamera(camera);
+    bmp_3x3.setCamera(camera);
+    bmp_1x1.setCamera(camera);
+
     navigator.setTarget(camera);
     navigator.setDirectCameraPanning(true);
     //camera->restrictRelativeZoomRange(0.5, 1e+300);
@@ -48,39 +52,6 @@ void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
         if (!data_buf.empty())
             loadConfigBuffer();
     }*/
-}
-
-
-// ────── Compute/Normalize dispatch helpers ──────
-
-
-bool Mandelbrot_Scene::compute_mandelbrot(EscapeField* field, CanvasImage128* bmp)
-{
-    MandelKernelFeatures   smoothing  = static_cast<MandelKernelFeatures>(smoothing_type);
-    FloatingPointType float_type = getRequiredFloatType(smoothing, camera.relativeZoom<f128>());
-
-    // Calculate first low-res phase in one-shot (no timeout)
-    // For high-res phases, break up work across multiple frames if necessary (kept track of with current_row)
-    int timeout = computing_phase == 0 ? 0 : 16;
-
-    return floatInvoke(float_type, [&]<typename T>()
-    {
-        // compute mandelbrot with first template arg T = [float / double / f128] as determined by float_type...
-
-        return table_invoke<T>(
-            /* function arguments    */ build_table(mandelbrot, [&], bmp, field, iter_lim, numThreads(), timeout, current_row, stripe_params),
-            /* rest of template args */ smoothing, flatten
-        );
-    });
-}
-
-void Mandelbrot_Scene::normalize_field(EscapeField* field, CanvasImage128* bmp)
-{
-    MandelKernelFeatures    smoothing = static_cast<MandelKernelFeatures>(smoothing_type);
-    FloatingPointType float_type = getRequiredFloatType(smoothing, camera.relativeZoom<f128>());
-
-    floatInvoke(float_type, [&]<typename T>() { normalize_shading_limits<T>(field, bmp, camera, iter_params, dist_params); });
-    floatInvoke(float_type, [&]<typename T>() { refreshFieldDepthNormalized<T>(field, bmp, smoothing, iter_params, dist_params, numThreads()); });
 }
 
 

@@ -4,6 +4,8 @@
 #include "types.h"
 #include "mandel_state.h"
 
+
+
 SIM_BEG;
 
 enum class MandelKernelFeatures
@@ -15,6 +17,8 @@ enum class MandelKernelFeatures
     MIX_ALL = 7,
     COUNT
 };
+
+bl_enable_enum_bitops(MandelKernelFeatures);
 
 enum class MandelTransform
 {

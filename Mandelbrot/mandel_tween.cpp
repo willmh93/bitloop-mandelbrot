@@ -14,6 +14,7 @@ SIM_BEG;
     return d;
 }*/
 
+
 void Mandelbrot_Scene::startTween(const MandelState& target)
 {
     // Now, set start/end tween states
@@ -135,6 +136,77 @@ void Mandelbrot_Scene::lerpState(
 
     // Spline Data
     //memcpy(this->x_spline_point, Math::lerp(state_a.x_spline_points, state_b.x_spline_points, f));
+}
+
+void Mandelbrot_Scene::updateTweening(double dt)
+{
+    if (tweening)
+    {
+        double ani_mult = fpsFactor();
+
+        if (steady_zoom)
+        {
+            bool finished_frame = capturedLastFrame();
+            if (finished_frame)
+            {
+                if (camera.relativeZoom<f128>() < state_b.camera.relativeZoom<f128>())
+                {
+                    ///blPrint() << "FINISHED FRAME. PROGRESSING";
+
+                    auto stepsToReach = [](f128 A, f128 B, f128 factor) {
+                        double n = (double)(log(B / A) / log(factor));
+                        return (int)ceil(n);
+                    };
+
+                    tween_frames_elapsed++;
+
+                    tween_expected_frames = stepsToReach(
+                        state_a.camera.relativeZoom<f128>(),
+                        state_b.camera.relativeZoom<f128>(),
+                        1.0 + steady_zoom_mult_speed); // seconds
+
+
+                    //static double ease_duration = 1.0; // seconds
+                    //double ease_pct_of_total = 
+
+                    // double ease_in_mult = std::min(tween_frames_elapsed / ease_duration, 1.0);
+                    // double ease_out_mult = std::min((tween_expected_frames - tween_frames_elapsed) / ease_duration, 1.0);
+                    // double ease_mult = std::min(ease_in_mult, ease_out_mult);
+
+                    //camera.zoom *= 1 + (steady_zoom_mult_speed * f128{ ease_mult });
+
+                    ///camera.zoom *= 1.0 + steady_zoom_mult_speed;
+                    camera.setRelativeZoom(camera.relativeZoom<f128>() * (1.0 + steady_zoom_mult_speed));
+                    camera.setRotation(camera.rotation() + Math::toRadians(0.075));
+
+                    // Update estimated time remaining
+                    double expected_time_left = dt * (tween_expected_frames - tween_frames_elapsed);
+                    expected_time_left_ma.push(expected_time_left);
+                }
+                else
+                {
+                    camera.setRelativeZoom(state_b.camera.relativeZoom<f128>());
+                    tweening = false;
+                    queueEndRecording();
+                }
+            }
+        }
+        else
+        {
+            double speed = 0.01 / tween_duration;
+            tween_progress += speed * ani_mult;
+
+            if (tween_progress < 1.0)
+                lerpState(state_a, state_b, tween_progress, false);
+            else
+            {
+                lerpState(state_a, state_b, 1.0, true);
+
+                tween_progress = 0.0;
+                tweening = false;
+            }
+        }
+    }
 }
 
 SIM_END;

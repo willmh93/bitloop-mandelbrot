@@ -278,7 +278,7 @@ void Mandelbrot_Scene::UI::populateCameraView()
             ImGui::Checkbox("Apply Animation", &animate_cardioid_angle);
             ImGui::SliderAngle("Angle", &ani_angle);
             if (animate_cardioid_angle)
-                ImGui::SliderAngle("Angle Inc", &ani_inc, -Math::HALF_PI, Math::HALF_PI, 1);
+                ImGui::SliderAngle("Angle Step", &ani_inc, -Math::HALF_PI, Math::HALF_PI, 1);
         }
         #endif
     }
@@ -471,7 +471,7 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
             ImGui::Spacing();
 
             ImGui::SliderFloat("Frequency", &stripe_params.freq, 1.0f, 100.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-            ImGui::SliderFloat("Phase", &stripe_params.phase, 0.0f, Math::PI * 2.0f, "%.5f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderAngle("Phase", &stripe_params.phase, 0.0f, Math::PI * 2.0f, 0, ImGuiSliderFlags_AlwaysClamp);
             ImGui::SliderFloat("Contrast", &stripe_params.contrast, 1.0f, 100.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
         }
 
@@ -494,8 +494,6 @@ void Mandelbrot_Scene::UI::populateGradientShiftOptions()
         bl_scoped(gradient_shift_step);
         bl_scoped(hue_shift_step);
 
-        bl_scoped(colors_updated);
-
         ImGui::Checkbox("Animate", &show_color_animation_options);
 
         float required_space = 0.0f;
@@ -505,8 +503,6 @@ void Mandelbrot_Scene::UI::populateGradientShiftOptions()
         if (ImGui::DragDouble("Gradient shift", &gradient_shift, 0.01, -100.0, 100.0, " %.3f", ImGuiSliderFlags_AlwaysClamp))
         {
             gradient_shift = Math::wrap(gradient_shift, 0.0, 1.0);
-            colors_updated = true;
-
             transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
         }
 
@@ -522,10 +518,7 @@ void Mandelbrot_Scene::UI::populateGradientShiftOptions()
 
         ImGui::SetNextItemWidthForSpace(required_space);
         if (ImGui::SliderDouble("Hue shift", &hue_shift, 0.0, 360, "%.3f"))
-        {
-            colors_updated = true;
             transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
-        }
 
         if (show_color_animation_options)
         {
@@ -547,16 +540,14 @@ void Mandelbrot_Scene::UI::populateGradientPicker()
     if (ImGui::Section("Base Color Gradient", true, 2.0f))
     {
         bl_scoped(gradient);
-        bl_scoped(colors_updated);
+        //bl_scoped(colors_updated);
 
         ImGui::Text("Load Preset");
         static int selecting_template = -1;
         if (ImGui::Combo("###ColorTemplate", &selecting_template, ColorGradientNames, (int)GradientPreset::COUNT))
         {
             generateGradientFromPreset(gradient, (GradientPreset)selecting_template);
-
             selecting_template = -1;
-            colors_updated = true;
         }
 
         if (ImGui::Button("Copy gradient C++ code"))
@@ -570,8 +561,6 @@ void Mandelbrot_Scene::UI::populateGradientPicker()
             platform()->ui_scale_factor(),
             platform()->ui_scale_factor(2.0f)))
         {
-            colors_updated = true;
-
             // Shift
             bl_pull(gradient_shifted);
             bl_pull(hue_shift);
@@ -584,135 +573,8 @@ void Mandelbrot_Scene::UI::populateGradientPicker()
 
     }
 }
-void Mandelbrot_Scene::UI::populateStats()
-{
-    if (ImGui::Section("Statistics", true))
-    {
-        bl_scoped(stats);
 
-        // --- compute info ---
-        {
-            ImGui::GroupBox box("compute_info", "Compute info", scale_size(13.0f), scale_size(20.0f));
 
-            bl_pull(smoothing_type);
-            bl_pull(camera);
-            bl_pull(dt_avg);
-            bl_pull(computing_phase);
-
-            // float precision
-            {
-
-                const char* float_precision = FloatingPointTypeNames[(int)getRequiredFloatType((MandelKernelFeatures)smoothing_type, camera.relativeZoom<f128>())];
-                ImGui::Text("Active float precision:  %s", float_precision);
-            }
-
-            // current phase
-            {
-                
-                ImGui::Text("Current phase:  %d/2", computing_phase);
-
-                std::stringstream ss;
-                for (int i = 0, j = 0; i <= 4; i++) {
-                    if (smoothing_type & (1 << i)) {
-                        if (j++ != 0) ss << " | ";
-                        ss << MandelSmoothingNames[i + 1];
-                    }
-                }
-            }
-
-            // compute timer
-            {
-                ImGui::Text("Full compute time:  %.0f ms", dt_avg);
-            }
-            
-            ImGui::Spacing();
-            ImGui::Spacing();
-            
-            // mouse pixel info
-            {
-                if (stats.hovered_field_pixel.depth < INSIDE_MANDELBROT_SET_SKIPPED)
-                {
-                    ImGui::Text("Mouse depth:        %.1f iterations", stats.hovered_field_pixel.depth);
-                    ImGui::Text("Mouse depth (norm): %.4f iterations", stats.hovered_field_pixel.final_depth);
-                }
-                else
-                {
-                    ImGui::Text("Mouse depth:        <interior>");
-                    ImGui::Text("Mouse depth (norm): <interior>");
-                }
-            }
-        }
-
-        // --- plots ---
-        ImGui::Spacing();
-        ImGui::Spacing();
-
-        // depth histogram
-        {
-
-            if (ImPlot::BeginPlot("Depth Histogram"))
-            {
-                depth_xs.reserve(stats.depth_histogram.size());
-                depth_ys.reserve(stats.depth_histogram.size());
-                depth_xs.clear();
-                depth_ys.clear();
-
-                for (const auto& [k, v] : stats.depth_histogram)
-                {
-                    //if (v <= 1) continue; // Hide very small counts
-                    depth_xs.push_back(k);
-                    depth_ys.push_back(v);
-                }
-
-                ImPlot::SetupAxis(ImAxis_X1, "depth", ImPlotAxisFlags_AutoFit);
-                ImPlot::SetupAxis(ImAxis_Y1, "pixel count", ImPlotAxisFlags_AutoFit);
-                ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
-                if (stats.depth_histogram.size())
-                {
-                    ImPlot::PlotLine("##depth_hist", depth_xs.data(), depth_ys.data(), (int)depth_xs.size());
-
-                    double max_depth = (--stats.depth_histogram.end())->first;
-                    if (stats.hovered_field_pixel.depth < max_depth)
-                    {
-
-                        auto nearest_it = stats.depth_histogram.lower_bound((int)stats.hovered_field_pixel.depth);
-                        if (nearest_it != stats.depth_histogram.end())
-                        {
-                            double px = nearest_it->first;
-                            double py = nearest_it->second;
-                            ImPlot::PlotInfLines("##depth_mark", &px, 1); // vertical line at X = mark
-                            ImPlot::PlotScatter("##depth_point", &px, &py, 1);
-                        }
-                    }
-                }
-                ImPlot::EndPlot();
-            }
-        }
-
-        // zoom - max_depth graph
-        /*{
-            if (ImPlot::BeginPlot("Max depth"))
-            {
-                max_depth_xs.clear();
-                max_depth_ys.clear();
-                int i = 1;
-                for (double z = 1; z < 1e30; z *= 10)
-                {
-                    double max_depth = mandelbrotIterLimit(z);
-                    max_depth_xs.push_back(i);
-                    max_depth_ys.push_back(max_depth);
-                    i++;
-                }
-                ImPlot::SetupAxis(ImAxis_X1, "zoom e10", ImPlotAxisFlags_AutoFit);
-                ImPlot::SetupAxis(ImAxis_Y1, "max iter", ImPlotAxisFlags_AutoFit);
-                //ImPlot::SetupAxisScale(ImAxis_X1, ImPlotScale_Log10);
-                //ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
-                ImPlot::PlotLine("##maxdepth_graph", max_depth_xs.data(), max_depth_ys.data(), (int)max_depth_xs.size());
-                ImPlot::EndPlot();
-            }
-        }*/
-    }
-}
 
 void Mandelbrot_Scene::UI::populateExperimental()
 {
@@ -802,11 +664,8 @@ void Mandelbrot_Scene::UI::populateSplinesDev()
 void Mandelbrot_Scene::UI::sidebar()
 {
     bl_scoped(tweening);
-    bl_scoped(colors_updated);
-    bl_pull(gradient);
 
-    bool is_tweening = tweening;
-    if (is_tweening)
+    if (tweening)
         ImGui::BeginDisabled();
         
     populateSavingLoading();
@@ -819,16 +678,13 @@ void Mandelbrot_Scene::UI::sidebar()
     populateStats();
     //populateExperimental();
         
-    if (is_tweening)
+    if (tweening)
         ImGui::EndDisabled();
 
     // ======== Developer ========
     #if MANDEL_DEV_EDIT_TWEEN_SPLINES
     populateSplinesDev();
     #endif
-
-    if (colors_updated)
-        bl_push(gradient);
 }
 
 

@@ -20,7 +20,7 @@ std::string MandelState::serialize() const
 
     if (use_smoothing)                          flags |= MANDEL_USE_SMOOTHING;
 
-    //flags |= ((uint32_t)smoothing_type << MANDEL_SMOOTH_BITSHIFT);
+    //flags |= ((uint32_t)mandel_features << MANDEL_SMOOTH_BITSHIFT);
     flags |= (version << MANDEL_VERSION_BITSHIFT);
 
     JSON::json info;
@@ -127,7 +127,7 @@ bool MandelState::_deserialize(std::string_view sv, bool COMPRESS_CONFIG)
 
     if (version >= 0)
     {
-        //smoothing_type = ((flags & MANDEL_SMOOTH_MASK) >> MANDEL_SMOOTH_BITSHIFT);
+        //mandel_features = ((flags & MANDEL_SMOOTH_MASK) >> MANDEL_SMOOTH_BITSHIFT);
 
         dynamic_iter_lim = flags & MANDEL_DYNAMIC_ITERS;
         show_axis = flags & MANDEL_SHOW_AXIS;

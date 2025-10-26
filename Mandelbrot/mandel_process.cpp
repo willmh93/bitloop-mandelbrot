@@ -29,85 +29,16 @@ void Mandelbrot_Scene::updateAnimation()
     }
 }
 
-void Mandelbrot_Scene::updateTweening(double dt)
-{
-    if (tweening)
-    {
-        double ani_mult = fpsFactor();
-
-        if (steady_zoom)
-        {
-            bool finished_frame = capturedLastFrame();
-            if (finished_frame)
-            {
-                if (camera.relativeZoom<f128>() < state_b.camera.relativeZoom<f128>())
-                {
-                    ///blPrint() << "FINISHED FRAME. PROGRESSING";
-
-                    auto stepsToReach = [](f128 A, f128 B, f128 factor) {
-                        double n = (double)(log(B / A) / log(factor));
-                        return (int)ceil(n);
-                    };
-
-                    tween_frames_elapsed++;
-
-                    tween_expected_frames = stepsToReach(
-                        state_a.camera.relativeZoom<f128>(),
-                        state_b.camera.relativeZoom<f128>(),
-                        1.0 + steady_zoom_mult_speed); // seconds
-
-
-                    //static double ease_duration = 1.0; // seconds
-                    //double ease_pct_of_total = 
-
-                    // double ease_in_mult = std::min(tween_frames_elapsed / ease_duration, 1.0);
-                    // double ease_out_mult = std::min((tween_expected_frames - tween_frames_elapsed) / ease_duration, 1.0);
-                    // double ease_mult = std::min(ease_in_mult, ease_out_mult);
-
-                    //camera.zoom *= 1 + (steady_zoom_mult_speed * f128{ ease_mult });
-
-                    ///camera.zoom *= 1.0 + steady_zoom_mult_speed;
-                    camera.setRelativeZoom(camera.relativeZoom<f128>() * (1.0 + steady_zoom_mult_speed));
-                    camera.setRotation(camera.rotation() + Math::toRadians(0.075));
-
-                    // Update estimated time remaining
-                    double expected_time_left = dt * (tween_expected_frames - tween_frames_elapsed);
-                    expected_time_left_ma.push(expected_time_left);
-                }
-                else
-                {
-                    camera.setRelativeZoom(state_b.camera.relativeZoom<f128>());
-                    tweening = false;
-                    queueEndRecording();
-                }
-            }
-        }
-        else
-        {
-            double speed = 0.01 / tween_duration;
-            tween_progress += speed * ani_mult;
-
-            if (tween_progress < 1.0)
-                lerpState(state_a, state_b, tween_progress, false);
-            else
-            {
-                lerpState(state_a, state_b, 1.0, true);
-
-                tween_progress = 0.0;
-                tweening = false;
-            }
-        }
-    }
-}
-
-void Mandelbrot_Scene::updateGradient()
+bool Mandelbrot_Scene::updateGradient()
 {
     if (first_frame || Changed(gradient, gradient_shift, hue_shift))
     {
         transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
         //savefile_changed = true;
-        colors_updated = true;
+        ///colors_updated = true;
+        return true;
     }
+    return false;
 }
 
 void Mandelbrot_Scene::updateCameraView()
@@ -168,61 +99,62 @@ void Mandelbrot_Scene::updateCameraView()
 
 void Mandelbrot_Scene::updateFieldSizes(Viewport* ctx)
 {
-    double rw = round(ctx->width());
-    double rh = round(ctx->height());
-    int iw = (int)(ceil(rw / 9)) * 9;
-    int ih = (int)(ceil(rh / 9)) * 9;
-    world_quad = camera.getTransform().toWorldQuad<f128>(0, 0, iw, ih);
+    int iw = (int)(ceil(ctx->width() / 9)) * 9;
+    int ih = (int)(ceil(ctx->height() / 9)) * 9;
 
-    bmp_9x9.setCamera(camera);
-    bmp_3x3.setCamera(camera);
-    bmp_1x1.setCamera(camera);
+    // set field sizes
+    field_9x9.setDimensions(iw / 9, ih / 9);
+    field_3x3.setDimensions(iw / 3, ih / 3);
+    field_1x1.setDimensions(iw, ih);
 
-    bmp_9x9.setStageRect(0, 0, iw, ih);
-    bmp_3x3.setStageRect(0, 0, iw, ih);
-    bmp_1x1.setStageRect(0, 0, iw, ih);
-
+    // set bitmap sizes
     bmp_9x9.setBitmapSize(iw / 9, ih / 9);
     bmp_3x3.setBitmapSize(iw / 3, ih / 3);
     bmp_1x1.setBitmapSize(iw, ih);
 
-    field_9x9.setDimensions(iw / 9, ih / 9);
-    field_3x3.setDimensions(iw / 3, ih / 3);
-    field_1x1.setDimensions(iw, ih);
+    // determine world quad from viewport rect
+    bmp_9x9.setStageRect(0, 0, iw, ih);
+    bmp_3x3.setStageRect(0, 0, iw, ih);
+    bmp_1x1.setStageRect(0, 0, iw, ih);
+
+    world_quad = bmp_1x1.worldQuad();
 }
 
-void Mandelbrot_Scene::updateEnabledKernelFeatures(bool mandel_changed)
+void Mandelbrot_Scene::updateEnabledKernelFeatures()
 {
+    bool mandel_changed = mandelChanged();
+
     constexpr double eps = std::numeric_limits<double>::epsilon();
-    int old_smoothing = smoothing_type;
-    int new_smoothing = 0;
+    MandelKernelFeatures old_smoothing = mandel_features;
+    MandelKernelFeatures new_smoothing = MandelKernelFeatures::NONE;
 
-    if (iter_weight > eps)   new_smoothing |= (int)MandelKernelFeatures::ITER;
-    if (dist_weight > eps)   new_smoothing |= (int)MandelKernelFeatures::DIST;
-    if (stripe_weight > eps) new_smoothing |= (int)MandelKernelFeatures::STRIPES;
+    if (iter_weight > eps)   new_smoothing |= MandelKernelFeatures::ITER;
+    if (dist_weight > eps)   new_smoothing |= MandelKernelFeatures::DIST;
+    if (stripe_weight > eps) new_smoothing |= MandelKernelFeatures::STRIPES;
 
-    bool force_upgrade = new_smoothing & ~old_smoothing;
-    bool downgrade_on_change = ~new_smoothing & old_smoothing;
+    bool force_upgrade       = (bool)( new_smoothing & ~old_smoothing);
+    bool downgrade_on_change = (bool)(~new_smoothing &  old_smoothing);
 
     if (force_upgrade || (mandel_changed && downgrade_on_change))
     {
         mandel_changed = true;
-        smoothing_type = new_smoothing;
+        mandel_features = new_smoothing;
     }
 }
 
-void Mandelbrot_Scene::updateActivePhaseAndField(bool mandel_changed)
+void Mandelbrot_Scene::updateActivePhaseAndField()
 {
-    // ────── Presented Mandelbrot *actually* changed? Restart on 9x9 bmp (phase 0) ──────
+    bool mandel_changed = mandelChanged();
+
+    // ────── presented mandelbrot changed? restart at phase 0 ──────
     if (mandel_changed)
     {
         bmp_9x9.clear(0, 255, 0, 255);
         bmp_3x3.clear(0, 255, 0, 255);
         bmp_1x1.clear(0, 255, 0, 255);
 
-        // Hide intro
-        if (!first_frame)
-            display_intro = false;
+        // hide intro on first change
+        if (!first_frame) display_intro = false;
 
         computing_phase = 0;
         current_row = 0;
@@ -232,9 +164,8 @@ void Mandelbrot_Scene::updateActivePhaseAndField(bool mandel_changed)
         compute_t0 = std::chrono::steady_clock::now();
     }
 
-    // ────── Prepare bmp / depth-field dimensions and view rect ──────
+    // ────── set pending bitmap & pending field ──────
     {
-        // Set pending bitmap & pending field
         switch (computing_phase)
         {
         case 0:  pending_bmp = &bmp_9x9;  pending_field = &field_9x9;  break;
@@ -244,24 +175,17 @@ void Mandelbrot_Scene::updateActivePhaseAndField(bool mandel_changed)
     }
 }
 
-bool Mandelbrot_Scene::shouldCompute(bool mandel_changed)
-{
-    bool phase_changed = Changed(computing_phase);
-
-    if (mandel_changed ||  // Has ANY option would would alter the final mandelbrot changed?
-        phase_changed ||   // Just computed last phase, begin computing next phase
-        current_row != 0)  // Not finished computing current phase, resume computing current phase
-    {
-        return true;
-    }
-    return false;
-}
-
 bool Mandelbrot_Scene::processCompute()
 {
     bool finished_compute = false;
 
     iter_lim = finalIterLimit(camera, quality, dynamic_iter_lim, tweening);
+
+    FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
+
+    // Calculate first low-res phase in one-shot (no timeout)
+    // For high-res phases, break up work across multiple frames if necessary (kept track of with current_row)
+    int timeout = computing_phase == 0 ? 0 : 16;
 
     //if (!flatten)
     {
@@ -269,14 +193,17 @@ bool Mandelbrot_Scene::processCompute()
         //bool x_axis_visible = quad.intersects({ {quad.minX(), 0}, {quad.maxX(), 0} });
 
         // Run appropriate kernel for given settings
-        finished_compute = frame_complete = compute_mandelbrot(pending_field, pending_bmp);
+        finished_compute = frame_complete = table_invoke(
+            build_table(mandelbrot, [&], pending_bmp, pending_field, iter_lim, numThreads(), timeout, current_row, stripe_params),
+            float_type, mandel_features, flatten
+        );
     }
     //else
     //{
     //    // Flat lerp
     //    finished_compute = dispatchBooleans(
     //        boolsTemplate(radialMandelbrot, [&]),
-    //        smoothing_type != MandelSmoothing::NONE,
+    //        mandel_features != MandelSmoothing::NONE,
     //        show_period2_bulb
     //    );
     //}
@@ -291,7 +218,7 @@ bool Mandelbrot_Scene::processCompute()
 
         switch (computing_phase) {
             case 0:
-                // ======== Finished first 9x9 low-res phase, forward computed pixels to 3x3 phase ========
+                /// finished first 9x9 low-res phase, forward computed pixels to 3x3 phase
                 field_3x3.setAllDepth(-1.0);
                 bmp_9x9.forEachPixel([this](int x, int y)
                 {
@@ -318,7 +245,7 @@ bool Mandelbrot_Scene::processCompute()
                 break;
 
             case 1:
-                // ======== Finished second 3x3 low-res phase, forward computed pixels to final 1x1 phase ========
+                /// finished second 3x3 low-res phase, forward computed pixels to final 1x1 phase
                 field_1x1.setAllDepth(-1.0);
                 bmp_3x3.forEachPixel([this](int x, int y)
                 {
@@ -351,7 +278,7 @@ bool Mandelbrot_Scene::processCompute()
                 break;
 
             case 2:
-                // ======== Finished final 1x1 phase, permit image/video capture of this frame ========
+                /// finished final 1x1 phase, permit capture of this frame
                 captureFrame(true);
                 final_frame_complete = true;
 
@@ -368,82 +295,80 @@ bool Mandelbrot_Scene::processCompute()
     return finished_compute;
 }
 
-void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
+bool Mandelbrot_Scene::mandelChanged()
 {
-    /// Process Viewports running this Scene
-    //bool savefile_changed = false;
-
-    // Never record a frame unless we finish computing a full frame
-    captureFrame(false);
-
-    updateAnimation();
-    updateTweening(dt);
-    updateGradient();
-    updateCameraView();
-    updateFieldSizes(ctx);
-
-    // ────── any properties changed that require restarting compute? ──────
-    bool started_tween = Changed(tweening);
-    bool view_changed = Changed(world_quad);
-    bool quality_opts_changed = Changed(quality, dynamic_iter_lim, smoothing_type, maxdepth_optimize, maxdepth_show_optimized);
-    bool splines_changed = Changed(x_spline.hash(), y_spline.hash());
-    bool flatten_changed = Changed(flatten, show_period2_bulb, cardioid_lerp_amount);
+    bool view_changed         = Changed(world_quad);
+    bool quality_opts_changed = Changed(quality, dynamic_iter_lim, mandel_features, maxdepth_optimize, maxdepth_show_optimized);
     bool compute_opts_changed = Changed(stripe_params);
+    bool splines_changed      = Changed(x_spline.hash(), y_spline.hash());
+    bool flatten_changed      = Changed(flatten, show_period2_bulb, cardioid_lerp_amount);
+    bool features_changed     = Changed(mandel_features);
+    return (first_frame || view_changed || quality_opts_changed || compute_opts_changed || splines_changed || flatten_changed || features_changed);
+}
 
-    bool mandel_changed = (first_frame || view_changed || started_tween || quality_opts_changed || compute_opts_changed || splines_changed || flatten_changed);
-
-    //if (mandel_changed)
-    //    savefile_changed = true;
-
-    updateEnabledKernelFeatures(mandel_changed);
-    updateActivePhaseAndField(mandel_changed);
-
-    // Do compute if mandel changed
-    // ────── do compute (if mandel changed) ──────
-    bool finished_compute = false;
-    if (shouldCompute(mandel_changed))
-        finished_compute = processCompute();
-
-    // ────── Color cycle changed? ──────
-    bool shade_formula_changed = Changed(shade_formula);
-    bool weights_changed = Changed(iter_weight, dist_weight, stripe_weight);
+bool Mandelbrot_Scene::shadingFormulaChanged()
+{
+    bool shade_formula_changed   = Changed(shade_formula);
+    bool weights_changed         = Changed(iter_weight, dist_weight, stripe_weight);
     bool cycle_iter_opts_changed = Changed(iter_params);
     bool cycle_dist_opts_changed = Changed(dist_params);
+    return (shade_formula_changed || weights_changed || cycle_iter_opts_changed || cycle_dist_opts_changed);
+}
 
-    if (shade_formula_changed || weights_changed || cycle_iter_opts_changed || cycle_dist_opts_changed)
-    {
-        // Reshade active_bmp
-        colors_updated = true;
-        //savefile_changed = true;
-    }
+void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
+{
+    /// Never record a frame unless we finish computing a full frame
+    captureFrame(false);
 
-    bool renormalize = finished_compute || cycle_iter_opts_changed || cycle_dist_opts_changed || shade_formula_changed || weights_changed;
-    bool reshade_bmp = renormalize || (colors_updated && frame_complete);
+    // ────── automatic updates (animation / tweening) ──────
+    updateAnimation();
+    updateTweening(dt);
 
-    // ────── Renormalize cached data if necessary  ──────
+    // ────── update states needed for compute ──────
+    updateCameraView();
+    updateFieldSizes(ctx);
+    updateEnabledKernelFeatures();
+    updateActivePhaseAndField();
+
+    // ────── resume unfinished compute ──────
+    bool finished_compute = false;
+    if (!final_frame_complete)
+        finished_compute = processCompute();
+
+    // ────── color cycle changed? ──────
+    bool gradient_changed        = updateGradient();
+    bool shading_formula_changed = shadingFormulaChanged();
+
+    bool renormalize = finished_compute || shading_formula_changed;
+    bool reshade     = renormalize || (gradient_changed && frame_complete);
+
+
+    // ────── renormalize cached data if necessary  ──────
     if (renormalize)
     {
-        normalize_field(active_field, active_bmp);
+        FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
+
+        table_invoke( build_table(normalize_shading_limits, [&], active_field, active_bmp, camera, iter_params, dist_params, numThreads()),
+            float_type);
+
+        table_invoke( build_table(refreshFieldDepthNormalized, [&], active_field, active_bmp, mandel_features, iter_params, dist_params, numThreads()),
+            float_type);
 
         if (final_frame_complete)
             collectStats();
     }
 
-    // ────── Refresh normalized values if styles change, or if we do full compute ──────
-    if (reshade_bmp)
+    // ────── reshade if data renormalized, or gradient changed ──────
+    if (reshade)
     {
         table_invoke(
             build_table(shadeBitmap, [&], active_field, active_bmp, &gradient_shifted, (float)iter_weight, (float)dist_weight, (float)stripe_weight, numThreads()),
             (MandelShaderFormula)shade_formula, maxdepth_show_optimized
         );
-
-        colors_updated = false;
-        //savefile_changed = true;
     }
 
-    // Unless we're doing a steady-zoom animation, just "record what we see" and capture every frame
-    /// todo: Disable for high quality snapshots
-    if (!steady_zoom && reshade_bmp && final_frame_complete)
+    // unless we're doing a steady-zoom animation, capture basic animated shading every frame
+    if (!steady_zoom && reshade && final_frame_complete)
         captureFrame(true);
 
     first_frame = false;
@@ -454,6 +379,7 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
         ani_angle += ani_inc;
         ani_angle = Math::wrapRadians2PI(ani_angle);
 
+        // If not tweening and we're animating the cardioid -> record frame
         if (isRecording())
             captureFrame(true);
     }
@@ -464,86 +390,11 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     // stats for mouse position
     if (active_field && active_bmp)
     {
-        //ctx->print() << "\nactive_field->max_depth: " << active_field->max_depth;
-        ///ctx->print() << "\nactive_field->min_dist: " << active_field->min_dist;
-        ///ctx->print() << "\nactive_field->max_dist: " << active_field->max_dist;
-
-        int px = (int)mouse->stage_x;
-        int py = (int)mouse->stage_y;
-        if (px >= 0 && py >= 0 && px < active_bmp->width() && py < active_bmp->height())
+        if (mouse->stage_x >= 0 && mouse->stage_y >= 0 && mouse->stage_x < active_bmp->width() && mouse->stage_y < active_bmp->height())
         {
             IVec2 pos = active_bmp->pixelPosFromWorld(DDVec2(mouse->world_x, mouse->world_y));
             EscapeFieldPixel* p = active_field->get(pos.x, pos.y);
-
-            if (p)
-            {
-                stats.hovered_field_pixel = *p;
-                //double raw_depth = p->depth;
-                //double raw_dist = p->getDist
-
-                //double dist = log(raw_dist);
-
-                ///double dist_factor = Math::lerpFactor(dist, active_field->min_dist, active_field->max_dist);
-
-                ///ctx->print() << "\nraw_depth: " << raw_depth << "\n";
-                ///ctx->print() << "\nraw_dist: " << raw_dist << "\n";
-                /// 
-                //ctx->print() << "log_dist: " << dist << "\n";
-                ///ctx->print() << "dist_factor: " << dist_factor << "\n\n";
-
-                /*f128 stable_min_raw_dist = camera.getTransform().toWorldOffset<f128>(DDVec2{ 0.5, 0 }).magnitude();
-                f128 stable_max_raw_dist = active_bmp->worldSize().magnitude() / 2.0;
-
-                f128 stable_min_dist = log(stable_min_raw_dist);
-                f128 stable_max_dist = log(stable_max_raw_dist);
-
-                ctx->print() << "stable_min_raw_dist: " << stable_min_raw_dist << "\n";
-                ctx->print() << "stable_max_raw_dist: " << stable_max_raw_dist << "\n\n";
-
-                ctx->print() << "min_possible_dist: " << stable_min_dist << "\n";
-                ctx->print() << "max_possible_dist: " << stable_max_dist << "\n\n";
-
-                ctx->print() << "Stabilized factor: " << Math::lerpFactor(dist, stable_min_dist, stable_max_dist);
-
-
-                double lower_depth_bound = cycle_iter_normalize_depth ? pending_field->min_depth : 0;
-
-                double normalized_depth = Math::lerpFactor(raw_depth, lower_depth_bound, (double)iter_lim);
-                double normalized_dist = Math::lerpFactor(raw_dist, pending_field->min_dist, pending_field->max_dist);
-
-                ctx->print() << std::setprecision(18);
-                ctx->print() << "\n\nnormalized_depth: " << normalized_depth;
-                ctx->print() << "\nnormalized_dist: " << normalized_dist;
-
-                ctx->print() << "\n\nraw_iters: " << raw_depth;
-                ctx->print() << "\nraw_dist: " << raw_dist << "\n";
-
-                double single_pixel_raw_dist = camera->toWorldOffset(DVec2{ 0.001, 0 }).magnitude();
-                double min_possible_dist = log(single_pixel_raw_dist);
-
-                double max_possible_raw_dist = ctx->worldSize().magnitude();
-                double max_possible_dist = log(max_possible_raw_dist);
-                //double max_possible_dist = de_cap_from_view(
-                //    camera->x(),
-                //    camera->y(),
-                //    ctx->worldSize().x / 2,
-                //    ctx->worldSize().y,
-                //    sqrt(escape_radius<MandelSmoothing::DIST>())
-                //);
-
-                ctx->print() << "\nlog_dist: " << log(raw_dist) << "\n";
-
-                //ctx->print() << "max_possible_raw_dist: " << max_possible_raw_dist << "\n";
-                ctx->print() << "single_pixel_raw_dist: " << single_pixel_raw_dist << "\n";
-                ctx->print() << "max_possible_raw_dist: " << max_possible_raw_dist << "\n";
-
-                ctx->print() << "min_possible_dist: " << min_possible_dist << "\n\n";
-                ctx->print() << "max_possible_dist: " << max_possible_dist << "\n\n";
-
-                double stable_normalized_dist = Math::lerpFactor(log(raw_dist), pending_field->min_dist, max_possible_dist);
-                ctx->print() << "stable_normalized_dist: " << stable_normalized_dist << "\n";
-                */
-            }
+            if (p) stats.hovered_field_pixel = *p;
         }
     }
 }

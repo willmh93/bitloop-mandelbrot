@@ -106,8 +106,6 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     bool    display_intro = true;
     double  log_color_cycle_iters = 0.0;
     int     iter_lim = 0; // Actual iter limit
-    bool    colors_updated = false; // still needed?
-    DDQuad  world_quad{};
     int     current_row = 0;
 
     // phase 0 = 9x smaller
@@ -117,6 +115,7 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     bool first_frame = true;
     bool frame_complete = false;  // Similar to finished_compute, but not cleared until next compute starts
     bool final_frame_complete = true;
+    DDQuad world_quad{};
 
     // ────── expensive interior "forwarding" optimization ──────
     struct {
@@ -124,10 +123,6 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     }  interior_phases_contract_expand;
 
     bool maxdepth_show_optimized = false;
-
-    // ────── computing / shading ──────
-    bool compute_mandelbrot(EscapeField* field, CanvasImage128* bmp);
-    void normalize_field(EscapeField* field, CanvasImage128* bmp);
 
     // ────── timers ──────
     std::chrono::steady_clock::time_point compute_t0;
@@ -173,18 +168,6 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
         using Interface::Interface;
         void sidebar();
 
-        // UI sections
-        void populateSavingLoading();
-        void populateExamples();
-        void populateCameraView();
-        void populateQualityOptions();
-        void populateColorCycleOptions();
-        void populateGradientShiftOptions();
-        void populateGradientPicker();
-        void populateStats();
-
-        void populateExperimental();
-        void populateSplinesDev();
 
         // dialog flags
         bool show_save_dialog = false;
@@ -201,6 +184,19 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
         // stats
         std::vector<int> depth_xs, depth_ys;
         //std::vector<double> max_depth_xs, max_depth_ys;
+
+        // UI sections
+        void populateSavingLoading();
+        void populateExamples();
+        void populateCameraView();
+        void populateQualityOptions();
+        void populateColorCycleOptions();
+        void populateGradientShiftOptions();
+        void populateGradientPicker();
+        void populateStats();
+
+        void populateExperimental();
+        void populateSplinesDev();
     };
 
     // ────── simulation processing ──────
@@ -208,14 +204,16 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     void sceneMounted(Viewport* viewport) override;
 
     // ────── viewport handling ──────
+    bool mandelChanged();
+    bool shadingFormulaChanged();
+
     void updateAnimation();
     void updateTweening(double dt);
-    void updateGradient();
+    bool updateGradient();
     void updateCameraView();
     void updateFieldSizes(Viewport* ctx);
-    void updateEnabledKernelFeatures(bool mandel_changed);
-    void updateActivePhaseAndField(bool mandel_changed);
-    bool shouldCompute(bool mandel_changed);
+    void updateEnabledKernelFeatures();
+    void updateActivePhaseAndField();
     bool processCompute();
 
     void viewportProcess(Viewport* ctx, double dt) override;

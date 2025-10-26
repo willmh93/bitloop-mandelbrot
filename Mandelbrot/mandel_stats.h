@@ -21,8 +21,10 @@ struct MandelStats
     };
 
     // {1} bucket_depth ==> pixel count
-    std::map<int, int> depth_histogram;
+    std::vector<int> depth_histogram;
+    double depth_histogram_bucket_size;
 
+    // {2} field_info
     FieldInfo field_info;
 
     // {3} mandelbrot stats for the pixel the mouse is hovered over
