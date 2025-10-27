@@ -72,6 +72,13 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
     if (show_axis && zoom_mag < 1.0e7)
         ctx->drawWorldAxis(0.5, 0, 0.5);
 
+    //ctx->worldHudMode();
+    //for (DVec2 p : active_field->plots)
+    //{
+    //    ctx->fillEllipse(p, 2.0);
+    //}
+    //ctx->worldMode();
+
     #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
     if (show_interactive_cardioid && zoom_mag < 1000000.0)
     {

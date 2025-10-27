@@ -46,6 +46,8 @@ void Mandelbrot_Scene::UI::populateStats()
 
             // mouse pixel info
             {
+                ImGui::Text("Mouse world pos:   [%.2f, %.2f]", stats.hovered_field_world_pos.x, stats.hovered_field_world_pos.y);
+
                 if (stats.hovered_field_pixel.depth < INSIDE_MANDELBROT_SET_SKIPPED)
                 {
                     ImGui::Text("Mouse depth:        %.1f iterations", stats.hovered_field_pixel.depth);

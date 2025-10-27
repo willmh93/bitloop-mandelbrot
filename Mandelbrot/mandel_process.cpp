@@ -194,7 +194,7 @@ bool Mandelbrot_Scene::processCompute()
 
         // Run appropriate kernel for given settings
         finished_compute = frame_complete = table_invoke(
-            build_table(mandelbrot, [&], pending_bmp, pending_field, iter_lim, numThreads(), timeout, current_row, stripe_params),
+            build_table(mandelbrot_pertubation, [&], pending_bmp, pending_field, iter_lim, numThreads(), timeout, current_row, stripe_params),
             float_type, mandel_features, flatten
         );
     }
@@ -220,60 +220,60 @@ bool Mandelbrot_Scene::processCompute()
             case 0:
                 /// finished first 9x9 low-res phase, forward computed pixels to 3x3 phase
                 field_3x3.setAllDepth(-1.0);
-                bmp_9x9.forEachPixel([this](int x, int y)
-                {
-                    field_3x3(x*3+1, y*3+1) = field_9x9(x, y);
-
-                    // Interior skipping optimization
-                    if (!field_9x9.has_data(x, y))
-                        field_9x9(x, y).flag_for_skip = true;
-                });
-
-                field_9x9.contractSkipFlags(interior_phases_contract_expand.c1);
-                field_9x9.expandSkipFlags(interior_phases_contract_expand.e1);
-                bmp_9x9.forEachPixel([this](int x, int y)
-                {
-                    if (field_9x9(x, y).flag_for_skip)
-                    {
-                        int x0 = x * 3, y0 = y * 3;
-                        for (int py = y0; py <= y0 + 3; py++)
-                            for (int px = x0; px <= x0 + 3; px++)
-                                field_3x3(px, py).flag_for_skip = true;
-                    }
-                });
+                //bmp_9x9.forEachPixel([this](int x, int y)
+                //{
+                //    field_3x3(x*3+1, y*3+1) = field_9x9(x, y);
+                //
+                //    // Interior skipping optimization
+                //    if (!field_9x9.has_data(x, y))
+                //        field_9x9(x, y).flag_for_skip = true;
+                //});
+                //
+                //field_9x9.contractSkipFlags(interior_phases_contract_expand.c1);
+                //field_9x9.expandSkipFlags(interior_phases_contract_expand.e1);
+                //bmp_9x9.forEachPixel([this](int x, int y)
+                //{
+                //    if (field_9x9(x, y).flag_for_skip)
+                //    {
+                //        int x0 = x * 3, y0 = y * 3;
+                //        for (int py = y0; py <= y0 + 3; py++)
+                //            for (int px = x0; px <= x0 + 3; px++)
+                //                field_3x3(px, py).flag_for_skip = true;
+                //    }
+                //});
 
                 break;
 
             case 1:
                 /// finished second 3x3 low-res phase, forward computed pixels to final 1x1 phase
                 field_1x1.setAllDepth(-1.0);
-                bmp_3x3.forEachPixel([this](int x, int y)
-                {
-                    field_1x1(x*3+1, y*3+1) = field_3x3(x, y);
-
-                    // Interior skipping optimization
-                    if (!field_3x3.has_data(x, y))
-                        field_3x3(x, y).flag_for_skip = true;
-                });
-
-                field_3x3.contractSkipFlags(interior_phases_contract_expand.c2);
-                field_3x3.expandSkipFlags(interior_phases_contract_expand.e2);
-                bmp_3x3.forEachPixel([this](int x, int y)
-                {
-                    if (field_3x3(x, y).flag_for_skip)
-                    {
-                        int x0 = x * 3, y0 = y * 3;
-                        for (int py = y0; py <= y0 + 3; py++)
-                        {
-                            for (int px = x0; px <= x0 + 3; px++)
-                            {
-                                EscapeFieldPixel& pixel = field_1x1(px, py);
-                                pixel.depth = INSIDE_MANDELBROT_SET_SKIPPED;
-                                pixel.flag_for_skip = true;
-                            }
-                        }
-                    }
-                });
+                //bmp_3x3.forEachPixel([this](int x, int y)
+                //{
+                //    field_1x1(x*3+1, y*3+1) = field_3x3(x, y);
+                //
+                //    // Interior skipping optimization
+                //    if (!field_3x3.has_data(x, y))
+                //        field_3x3(x, y).flag_for_skip = true;
+                //});
+                //
+                //field_3x3.contractSkipFlags(interior_phases_contract_expand.c2);
+                //field_3x3.expandSkipFlags(interior_phases_contract_expand.e2);
+                //bmp_3x3.forEachPixel([this](int x, int y)
+                //{
+                //    if (field_3x3(x, y).flag_for_skip)
+                //    {
+                //        int x0 = x * 3, y0 = y * 3;
+                //        for (int py = y0; py <= y0 + 3; py++)
+                //        {
+                //            for (int px = x0; px <= x0 + 3; px++)
+                //            {
+                //                EscapeFieldPixel& pixel = field_1x1(px, py);
+                //                pixel.depth = INSIDE_MANDELBROT_SET_SKIPPED;
+                //                pixel.flag_for_skip = true;
+                //            }
+                //        }
+                //    }
+                //});
 
                 break;
 
@@ -395,6 +395,9 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
             IVec2 pos = active_bmp->pixelPosFromWorld(DDVec2(mouse->world_x, mouse->world_y));
             EscapeFieldPixel* p = active_field->get(pos.x, pos.y);
             if (p) stats.hovered_field_pixel = *p;
+
+            active_bmp->worldPos((int)mouse->client_x, (int)mouse->client_y, stats.hovered_field_world_pos.x, stats.hovered_field_world_pos.y);
+
         }
     }
 }

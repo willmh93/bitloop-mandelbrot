@@ -92,7 +92,11 @@ namespace detail
 {
     // Complex helpers
 
-    template<class T> struct cplx { T x, y; };
+    template<class T> struct cplx { 
+        T x, y; 
+        constexpr cplx operator +(const cplx& r) const { return { x + r.x, y + r.y }; }
+        constexpr cplx operator *(const cplx& r) const { return { x * r.x - y * r.y, x * r.y + y * r.x }; }
+    };
 
     template<class T>
     FAST_INLINE constexpr void step(cplx<T>& z, const cplx<T>& c)
@@ -731,14 +735,183 @@ bool radialMandelbrot()
 };*/
 
 
-/// --------------------------------------------------------------
-/// Uses the bmp's CanvasObject::worldQuad to to loop over pixels,
-/// and calculates mandelbrot set for all pixels which don't already
-/// have a depth > 0 (i.e. Filling in the blanks)
-/// --------------------------------------------------------------
+
+template<class T>
+struct RefOrbit {
+    using cplx = detail::cplx<T>;
+    std::vector<cplx> z_pre;   // before step n+1
+    std::vector<cplx> z_post;  // after  step n+1
+    int iter_esc = 0;          // first escape iter (n+1), or == iter_lim
+    bool escaped = false;
+    int  max_ref = 0;          // last index where z_post is still <= ER
+    T cx{}, cy{};
+};
+
+template<class Tlo>
+struct RefOrbitLo {
+    std::vector<Tlo> pre_x, pre_y; // z_pre downcasted once
+    // (Optionally add post_x/post_y if you want cached z_post too)
+    Tlo cx{}, cy{};
+    int max_ref = 0;
+};
+
+
+template<class T, MandelKernelFeatures S>
+FAST_INLINE void build_ref_orbit(const T& cx, const T& cy, int iter_lim, RefOrbit<T>& out)
+{
+    using detail::cplx;
+    constexpr T ER2 = T(escape_radius<S>());
+    const T zero = T(0);
+
+    out.cx = cx; out.cy = cy;
+    out.z_pre.clear(); out.z_post.clear();
+    out.z_pre.reserve(iter_lim);
+    out.z_post.reserve(iter_lim);
+    out.iter_esc = iter_lim;
+    out.escaped = false;
+
+    cplx<T> z{ zero, zero };
+    cplx<T> c{ cx, cy };
+
+    for (int n = 0; n < iter_lim; ++n) {
+        out.z_pre.push_back(z);
+        detail::step(z, c);
+        out.z_post.push_back(z);
+        if (!out.escaped && detail::mag2(z) > ER2) {
+            out.iter_esc = n + 1;
+            out.escaped = true;
+        }
+    }
+
+    // last post-step index that is still safe to use
+    out.max_ref = out.escaped ? (out.iter_esc - 1) : (int)out.z_post.size() - 1;
+    if (out.max_ref < 0) out.max_ref = 0;
+}
+
+template<class Thi, class Tlo, MandelKernelFeatures S>
+inline void build_ref_orbit_lo(const RefOrbit<Thi>& hi, RefOrbitLo<Tlo>& lo)
+{
+    const size_t N = hi.z_pre.size();
+    lo.pre_x.resize(N);
+    lo.pre_y.resize(N);
+    for (size_t i = 0; i < N; ++i) {
+        lo.pre_x[i] = (Tlo)hi.z_pre[i].x;
+        lo.pre_y[i] = (Tlo)hi.z_pre[i].y;
+    }
+    lo.cx = (Tlo)hi.cx;
+    lo.cy = (Tlo)hi.cy;
+    lo.max_ref = hi.max_ref;
+}
+
+template<class Tlo, class Thi, MandelKernelFeatures S>
+FAST_INLINE bool approx_depth_single_ref_rebase(
+    const RefOrbitLo<Tlo>& ref,
+    Tlo dcx, Tlo dcy,
+    int iter_lim,
+    double& depth_out)
+{
+    using cplx = detail::cplx<Tlo>;
+    constexpr Tlo ER2 = Tlo(escape_radius<S>());
+
+    // delta state
+    Tlo dx = 0, dy = 0;
+
+    int ri = 0;
+    const int R = std::max(0, ref.max_ref);
+
+    for (int n = 0; n < iter_lim; ++n)
+    {
+        const Tlo zx = ref.pre_x[ri];
+        const Tlo zy = ref.pre_y[ri];
+
+        // delta_{n+1} = 2*zpre*delta + delta^2 + dC
+        const Tlo tx = (zx + zx) * dx - (zy + zy) * dy; // 2*zpre*delta
+        const Tlo ty = (zx + zx) * dy + (zy + zy) * dx;
+        const Tlo ux = dx * dx - dy * dy;               // delta^2
+        const Tlo uy = Tlo(2) * dx * dy;
+        dx = tx + ux + dcx;
+        dy = ty + uy + dcy;
+        //if (!std::isfinite(dx) || !std::isfinite(dy)) return false;
+
+        // z_post = z_pre^2 + c_ref   (computed in Tlo to avoid loads)
+        const Tlo zpx = zx * zx - zy * zy + ref.cx;
+        const Tlo zpy = Tlo(2) * zx * zy + ref.cy;
+
+        // r2 = |z_post + delta|^2  (no struct temporaries)
+        const Tlo zp2 = zpx * zpx + zpy * zpy;
+        const Tlo d2 = dx * dx + dy * dy;
+        const Tlo dot = zpx * dx + zpy * dy;
+        const Tlo r2 = zp2 + Tlo(2) * dot + d2;
+
+        if (r2 > ER2) {
+            const double r2d = (double)r2;
+            const double log_abs_z = 0.5 * std::log(std::max(r2d, 1e-300));
+            const double nu = double(n + 1) + 1.0 - std::log2(std::max(log_abs_z, 1e-300));
+            depth_out = nu - mandelbrot_smoothing_offset<S>();
+            return true;// std::isfinite(depth_out);
+        }
+
+        // rebase if |z_after|^2 < |delta|^2
+        if (r2 < d2) {
+            // need z_after components once:
+            const Tlo zax = zpx + dx;
+            const Tlo zay = zpy + dy;
+            dx = zax; dy = zay;
+            ri = 0;
+        }
+        else {
+            ++ri; if (ri > R) ri = 0;
+        }
+    }
+
+    depth_out = INSIDE_MANDELBROT_SET;
+    return true;
+}
+
 
 template<typename T, MandelKernelFeatures Smoothing, bool flatten>
-bool mandelbrot(CanvasImage128* bmp, EscapeField* field, int iter_lim, int threads, int timeout, int& current_row, StripeParams stripe_params={})
+bool mandelbrot_pertubation(CanvasImage128* bmp, EscapeField* field, int iter_lim, int threads, int timeout, int& current_tile, [[maybe_unused]] StripeParams stripe_params = {})
+{
+    int tile_w = (int)ceil((float)bmp->width() / 32.0f);
+    int tile_h = (int)ceil((float)bmp->height() / 32.0f);
+
+    typedef double T_lo;
+    RefOrbit<T>      orbit_hi;
+    RefOrbitLo<T_lo> orbit_lo;
+
+    // 1) calculate high-precision reference
+    bmp->forEachWorldTile<T>(bmp->width(), bmp->height(),
+        [&](int bmp_cx [[maybe_unused]], int bmp_cy [[maybe_unused]], T wcx, T wcy, int tile [[maybe_unused]], int x0 [[maybe_unused]], int y0 [[maybe_unused]], int, int)
+    {
+        build_ref_orbit<T, Smoothing>(wcx, wcy, iter_lim, orbit_hi);
+        build_ref_orbit_lo<T, T_lo, Smoothing>(orbit_hi, orbit_lo);
+    });
+
+    // 2) quickly calclate pixels using reference
+    bool frame_complete = bmp->forEachWorldTilePixel<T>(tile_w, tile_h, current_tile, [&](int x, int y, T wx, T wy, int tile [[maybe_unused]] )
+    {
+        EscapeFieldPixel& field_pixel = field->at(x, y);
+
+        double depth = field_pixel.depth;
+        if (depth >= 0) return;
+
+        const T dcx_hi = wx - orbit_hi.cx;
+        const T dcy_hi = wy - orbit_hi.cy;
+
+        approx_depth_single_ref_rebase<T_lo, T, Smoothing>(orbit_lo, (T_lo)dcx_hi, (T_lo)dcy_hi, iter_lim, depth);
+
+        field_pixel.depth = depth;
+
+    }, threads, timeout);
+
+    return frame_complete;
+};
+
+//field->plots.resize(tiles_n);
+
+
+template<typename T, MandelKernelFeatures Smoothing, bool flatten>
+bool mandelbrot(CanvasImage128* bmp, EscapeField* field, int iter_lim, int threads, int timeout, int& current_row, StripeParams stripe_params = {})
 {
     bool frame_complete = bmp->forEachWorldPixel<T>(current_row, [&](int x, int y, T wx, T wy)
     {

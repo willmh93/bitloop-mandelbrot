@@ -29,6 +29,7 @@ struct MandelStats
 
     // {3} mandelbrot stats for the pixel the mouse is hovered over
     EscapeFieldPixel hovered_field_pixel;
+    DVec2 hovered_field_world_pos;
 
     // Check if any flags are dirty
     bool operator==(const MandelStats& rhs) const {

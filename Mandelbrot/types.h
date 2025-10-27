@@ -155,6 +155,8 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
 
     int w = 0, h = 0;
 
+    std::vector<DVec2> plots;
+
     EscapeField(int phase) : compute_phase(phase) {}
 
     void setAllDepth(double value)
