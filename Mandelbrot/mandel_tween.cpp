@@ -1,5 +1,6 @@
 #include "Mandelbrot.h"
 #include "conversions.h"
+#include <bitloop/util/math_util.h>
 
 SIM_BEG;
 
@@ -55,11 +56,11 @@ void Mandelbrot_Scene::startTween(const MandelState& target)
     // Begin tween
     this->tween_progress = 0.0;
     this->tweening = true;
-    this->tween_duration = 2;// tweenDistance(scene_data.state_a, scene_data.state_b);
+    this->tween_duration = 10;// tweenDistance(scene_data.state_a, scene_data.state_b);
     this->dist_params.cycle_dist_invert = this->state_b.dist_params.cycle_dist_invert;
 }
 
-void Mandelbrot_Scene::lerpState(
+double Mandelbrot_Scene::lerpState(
     const MandelState& a,
     const MandelState& b,
     double f,
@@ -71,16 +72,63 @@ void Mandelbrot_Scene::lerpState(
     double src_iter_lim = a.dynamic_iter_lim ? (mandelbrotIterLimit(a.camera.relativeZoom<f128>()) * a.quality) : a.quality;
     double dst_iter_lim = b.dynamic_iter_lim ? (mandelbrotIterLimit(b.camera.relativeZoom<f128>()) * b.quality) : b.quality;
 
-    // lerp camera
-    double lift_weight = (double)this->tween_zoom_lift_spline((float)f);
-    f128 lift_height = this->tween_lift * lift_weight;
     f128 a_height = toHeight(a.camera.relativeZoom<f128>());
     f128 b_height = toHeight(b.camera.relativeZoom<f128>());
 
+    /*double lift_weight = (double)this->tween_zoom_lift_spline((float)f);
+    f128 lift_height = this->tween_lift * lift_weight;
+
     double base_zoom_f = this->tween_base_zoom_spline((float)f);
     f128 dst_height = Math::lerp(a_height, b_height, base_zoom_f) + lift_height;
+
+    // lerp camera pos
     CameraInfo::lerp(this->camera, a.camera, b.camera, pos_f);
+
+    // lerp zoom
     this->camera.setRelativeZoom(fromHeight(dst_height)); // override zoom from computed "height"
+    */
+
+    constexpr float one_third = 1.0f / 3.0f;
+    constexpr float two_thirds = 2.0f / 3.0f;
+    const float tween_f = (float)f;
+
+    float f0 = Math::lerpFactorClamped(tween_f, 0.0f, one_third);
+    float f1 = Math::lerpFactorClamped(tween_f, one_third, two_thirds);
+    float f2 = Math::lerpFactorClamped(tween_f, two_thirds, 1.0f);
+
+    //if (tween_f < one_third)
+    if (tween_f < 0.5)
+    {
+        //float f0 = tween_f / one_third;
+        float lerp_f0 = this->tween_base_zoom_spline(f0);
+
+        // Zoom out phase
+        f128 dst_height = Math::lerp(a_height, f128(1), lerp_f0);
+        this->camera.setRelativeZoom(fromHeight(dst_height));
+
+    }
+    //else if (tween_f < two_thirds)
+    {
+        //float f1 = (tween_f - one_third) / one_third;
+        float lerp_f1 = this->tween_base_zoom_spline(f1);
+
+        // Pan phase
+        f128 tx = Math::lerp(a.camera.x<f128>(), b.camera.x<f128>(), lerp_f1);
+        f128 ty = Math::lerp(a.camera.y<f128>(), b.camera.y<f128>(), lerp_f1);
+        this->camera.setPos(tx, ty);
+        this->camera.setRotation(Math::lerpAngle(a.camera.rotation(), b.camera.rotation(), lerp_f1));
+        this->camera.setStretch(Math::lerp(a.camera.stretch(), b.camera.stretch(), lerp_f1));
+    }
+    //else
+    if (tween_f > 0.5)
+    {
+        // Zoom in phase
+        //float f2 = (tween_f - two_thirds) / one_third;
+        float lerp_f2 = this->tween_base_zoom_spline(f2);
+
+        f128 dst_height = Math::lerp(f128(1), b_height, lerp_f2);
+        this->camera.setRelativeZoom(fromHeight(dst_height));
+    }
 
     // quality
     this->quality = Math::lerp(src_iter_lim, dst_iter_lim, pos_f);
@@ -136,6 +184,8 @@ void Mandelbrot_Scene::lerpState(
 
     // Spline Data
     //memcpy(this->x_spline_point, Math::lerp(state_a.x_spline_points, state_b.x_spline_points, f));
+
+    return 0;
 }
 
 void Mandelbrot_Scene::updateTweening(double dt)
@@ -177,7 +227,13 @@ void Mandelbrot_Scene::updateTweening(double dt)
 
                     ///camera.zoom *= 1.0 + steady_zoom_mult_speed;
                     camera.setRelativeZoom(camera.relativeZoom<f128>() * (1.0 + steady_zoom_mult_speed));
-                    camera.setRotation(camera.rotation() + Math::toRadians(0.075));
+                    camera.setRotation(camera.rotation() + Math::toRadians(0.05));
+
+                    steady_zoom_pct = (float)Math::lerpFactor(
+                        toNormalizedZoom(camera.relativeZoom<f128>()),
+                        toNormalizedZoom(state_a.camera.relativeZoom<f128>()),
+                        toNormalizedZoom(state_b.camera.relativeZoom<f128>())
+                    ) * 100.0f;
 
                     // Update estimated time remaining
                     double expected_time_left = dt * (tween_expected_frames - tween_frames_elapsed);
@@ -193,15 +249,17 @@ void Mandelbrot_Scene::updateTweening(double dt)
         }
         else
         {
+            ///tween_progress = lerpState(state_a, state_b, tween_progress, false);
+
             double speed = 0.01 / tween_duration;
             tween_progress += speed * ani_mult;
-
+            
             if (tween_progress < 1.0)
                 lerpState(state_a, state_b, tween_progress, false);
             else
             {
                 lerpState(state_a, state_b, 1.0, true);
-
+            
                 tween_progress = 0.0;
                 tweening = false;
             }

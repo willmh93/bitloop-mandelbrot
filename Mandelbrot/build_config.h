@@ -6,7 +6,7 @@
 #if MANDEL_DEV_MODE //&& defined(BL_DEBUG)
 
     /// ──────  Enabled Dev Options ──────
-#define MANDEL_DEV_EDIT_TWEEN_SPLINES               0
+#define MANDEL_DEV_EDIT_TWEEN_SPLINES           0
 
 #endif
 

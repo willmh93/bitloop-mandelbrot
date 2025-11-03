@@ -4,14 +4,26 @@
 #include <cmath>
 #include <vector>
 
-#include "build_config.h"
+enum class MandelKernelFeatures
+{
+    NONE = 0,
+    ITER = 1,
+    DIST = 2,
+    STRIPES = 4,
+    MIX_ALL = 7,
+    COUNT
+};
+// todo: find way to put inside SIM_BEG ns (wasm32 error, must be in global)
+bl_enable_enum_bitops(MandelKernelFeatures);
 
 SIM_BEG;
+
 
 using namespace bl;
 
 constexpr double INSIDE_MANDELBROT_SET = std::numeric_limits<double>::max();
 const double INSIDE_MANDELBROT_SET_SKIPPED = std::nextafter(INSIDE_MANDELBROT_SET, 0.0f);
+
 
 enum MandelFlag : uint32_t
 {
@@ -95,63 +107,41 @@ struct StripeParams
 struct EscapeFieldPixel
 {
     f64 depth;
+    f64 dist;
+    f32 stripe;
 
-    union
-    {
-        f32  dist_32;
-        f64  dist_64;
-        f128 dist_128;
-    };
-
-    union
-    {
-        f32  stripe_32;
-        f64  stripe_64;
-        f128 stripe_128;
-    };
-
-    // todo: Reuse above vars to save space
     f32 final_depth;
     f32 final_dist;
     f32 final_stripe;
 
-    bool flag_for_skip;
-
-    inline void setDist(f32 d32)   { dist_32 = d32; }
-    inline void setDist(f64 d64)   { dist_64 = d64; }
-    inline void setDist(f128 d128) { dist_128 = d128; }
-
-    inline void setStripe(f32 s32)   { stripe_32 = s32; }
-    inline void setStripe(f64 s64)   { stripe_64 = s64; }
-    inline void setStripe(f128 s128) { stripe_128 = s128; }
-
-    template<typename T> requires std::same_as<T, f32>  constexpr T getDist() { return dist_32; }
-    template<typename T> requires std::same_as<T, f64>  constexpr T getDist() { return dist_64; }
-    template<typename T> requires std::same_as<T, f128> constexpr T getDist() { return dist_128; }
-
-    template<typename T> requires std::same_as<T, f32>  constexpr T getStripe() { return stripe_32; }
-    template<typename T> requires std::same_as<T, f64>  constexpr T getStripe() { return stripe_64; }
-    template<typename T> requires std::same_as<T, f128> constexpr T getStripe() { return stripe_128; }
+    //bool flag_for_skip;
 };
+
+constexpr int phaseBmpScale(int phase)
+{
+    if (phase == 0) return 9;
+    if (phase == 1) return 3;
+    return 1;
+}
 
 struct EscapeField : public std::vector<EscapeFieldPixel>
 {
     int compute_phase;
+    MandelKernelFeatures mandel_features = MandelKernelFeatures::ITER;
 
-    double min_depth = 0.0;
-    double max_depth = 0.0;
-
-    double assumed_iter_min = 0.0;
-    double assumed_iter_max = 0.0;
+    f64 min_depth = 0.0;
+    f64 max_depth = 0.0; // unused?
 
     f128 stable_min_dist{};
     f128 stable_max_dist{};
 
-    f128 min_stripe{};
-    f128 max_stripe{};
+    f32 min_stripe{};
+    f32 max_stripe{};
 
-    double log_color_cycle_iters;
-    double cycle_dist_value;
+    f64 log_color_cycle_iters{};
+    f64 cycle_dist_value{};
+
+    std::vector<i8> skip_flags;
 
     int w = 0, h = 0;
 
@@ -159,15 +149,17 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
 
     EscapeField(int phase) : compute_phase(phase) {}
 
-    void setAllDepth(double value)
+    void setAllDepth(f64 value)
     {
         for (int i = 0; i < size(); i++)
         {
             EscapeFieldPixel &p = std::vector<EscapeFieldPixel>::at(i);
             p.depth = value;
-            p.dist_128 = { value, 0 };
-            p.stripe_128 = { value, 0 };
-            p.flag_for_skip = false;
+            p.dist = value;
+            p.stripe = (f32)value;
+            //p.dist_128 = { value, 0 };
+            //p.stripe_128 = { value, 0 };
+            skip_flags[i] = 0;
         }
     }
     void setDimensions(int _w, int _h)
@@ -176,6 +168,7 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
         w = _w;
         h = _h;
         resize(w * h, { -1.0, -1.0 });
+        skip_flags.resize(w * h, 0);
     }
 
     EscapeFieldPixel& operator ()(int x, int y)
@@ -193,6 +186,16 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
         int i = y * w + x;
         if (i < 0 || i >= size()) return nullptr;
         return data() + i;
+    }
+
+    void set_skip_flag(int x, int y, u8 b)
+    {
+        skip_flags[y * w + x] = b;
+    }
+
+    u8 get_skip_flag(int x, int y)
+    {
+        return skip_flags[y * w + x];
     }
 
     bool safe(int x, int y)
@@ -224,7 +227,7 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
         std::vector<uint8_t> in(size_t(w) * size_t(h), 0);
         for (int y = 0; y < h; ++y)
             for (int x = 0; x < w; ++x)
-                in[idx(x, y)] = at(x, y).flag_for_skip ? 1 : 0;
+                in[idx(x, y)] = get_skip_flag(x, y) ? 1 : 0;
 
         // Erode
         std::vector<uint8_t> out(size_t(w) * size_t(h), 0);
@@ -251,7 +254,7 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
         // Write back
         for (int y = 0; y < h; ++y)
             for (int x = 0; x < w; ++x)
-                at(x, y).flag_for_skip = (out[idx(x, y)] != 0);
+                set_skip_flag(x, y, out[idx(x, y)] != 0);
     }
 
     void expandSkipFlags(int r = 1, bool overwrite = false)
@@ -264,7 +267,7 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
         std::vector<uint8_t> mask(N, 0);
         for (int y = 0; y < H; ++y)
             for (int x = 0; x < W; ++x)
-                mask[y * W + x] = at(x, y).flag_for_skip ? 1 : 0;
+                mask[y * W + x] = get_skip_flag(x, y) ? 1 : 0;
 
         // dilate
         std::vector<uint8_t> dil(N, 0);
@@ -280,12 +283,13 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
         // write back
         for (int y = 0; y < H; ++y)
         {
-            for (int x = 0; x < W; ++x) {
+            for (int x = 0; x < W; ++x) 
+            {
                 bool v = ring[y * W + x];
                 if (overwrite)
-                    at(x, y).flag_for_skip = v;
+                    set_skip_flag(x, y, v);
                 else
-                    at(x, y).flag_for_skip = at(x, y).flag_for_skip || v;
+                    set_skip_flag(x, y, get_skip_flag(x, y) || v);
             }
         }
     }
@@ -308,6 +312,101 @@ private:
             }
         }
         return 0;
+    }
+};
+
+struct NormalizationPixel : public EscapeFieldPixel
+{
+    DVec2  stage_pos;
+    DDVec2 world_pos;
+    bool   is_final;
+    float  weight;
+};
+
+class NormalizationField
+{
+    std::vector<DVec2> local_field;
+    CanvasObject128 bounds;
+
+public:
+
+    std::vector<NormalizationPixel> world_field;
+
+    NormalizationField()
+    {
+        setShape(0.025, 2.0);
+    }
+
+    void setShape(double sample_r, double exponent)
+    {
+        local_field = Math::delaunayMeshEllipse<f64>(0, 0, 1.0, sample_r, exponent);
+        world_field.resize(local_field.size());
+    }
+
+    void updateField(const CameraInfo &camera, double scale)
+    {
+        f128   world_radius = (scale / camera.relativeZoom<f128>()) * 2.0;
+        DDVec2 cam_center_world = camera.pos<f128>();
+
+        // Get stage quad of world ellipse bounds for fast stage interpolation
+        bounds.setCamera(camera);
+        bounds.setWorldRect(cam_center_world - world_radius, world_radius * 2.0);
+        DQuad stage_quad = bounds.stageQuad();
+
+        for (size_t i=0; i< world_field.size(); i++)
+        {
+            NormalizationPixel& px = world_field[i];
+            const DVec2 pt = local_field[i];
+
+            px.world_pos = cam_center_world + (pt * world_radius);
+            px.stage_pos = stage_quad.lerpPoint(0.5 + pt * 0.5);
+
+            px.weight = 1.0f - (float)pt.magnitude();
+        }
+    }
+
+    void clearFinalFlags()
+    {
+        for (NormalizationPixel& p : world_field)
+            p.is_final = false;
+    }
+
+    template<typename Callback>
+    void forEach(Callback&& callback, int thread_count = Thread::idealThreadCount())
+    {
+        //static_assert(std::is_invocable_r_v<void, Callback, NormalizationPixel&>,
+        //    "Callback must be: void(NormalizationPixel&)");
+
+        int pixel_count = (int)world_field.size();
+        std::vector<std::pair<int, int>> ranges = Thread::splitRanges<int>(pixel_count, thread_count);
+
+        std::vector<std::future<void>> futures(thread_count);
+
+        for (int ti = 0; ti < thread_count; ti++)
+        {
+            const std::pair<int, int>& range = ranges[ti];
+            futures[ti] = Thread::pool().submit_task([&]()
+            {
+                int i0 = range.first;
+                int i1 = range.second;
+                if constexpr (std::is_invocable_r_v<void, Callback, NormalizationPixel&>)
+                {
+                    for (int i = i0; i < i1; i++)
+                        callback(world_field[i]);
+                }
+                else
+                {
+                    for (int i = i0; i < i1; i++)
+                        callback(world_field[i], ti);
+                }
+            });
+        }
+
+        for (int ti = 0; ti < thread_count; ti++)
+        {
+            if (futures[ti].valid())
+                futures[ti].get();
+        }
     }
 };
 

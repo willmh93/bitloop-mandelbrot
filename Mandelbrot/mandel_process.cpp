@@ -118,6 +118,24 @@ void Mandelbrot_Scene::updateFieldSizes(Viewport* ctx)
     bmp_1x1.setStageRect(0, 0, iw, ih);
 
     world_quad = bmp_1x1.worldQuad();
+
+    bool changed_normalization_field_shape = false;
+    if (first_frame || Changed(normalize_field_quality) || Changed(normalize_field_exponent))
+    {
+        double spacing = (1.0 / normalize_field_quality) / 200.0;
+        norm_field.setShape(spacing, normalize_field_exponent);
+        changed_normalization_field_shape = true;
+        //norm_field.setShape(0.005, 1.5);
+    }
+
+    if (first_frame ||
+        changed_normalization_field_shape ||
+        Changed(world_quad) ||
+        Changed(normalize_field_scale))
+    {
+        norm_field.updateField(camera, normalize_field_scale);
+    }
+
 }
 
 void Mandelbrot_Scene::updateEnabledKernelFeatures()
@@ -138,7 +156,12 @@ void Mandelbrot_Scene::updateEnabledKernelFeatures()
     if (force_upgrade || (mandel_changed && downgrade_on_change))
     {
         mandel_changed = true;
+
         mandel_features = new_smoothing;
+
+        field_1x1.mandel_features = mandel_features;
+        field_3x3.mandel_features = mandel_features;
+        field_9x9.mandel_features = mandel_features;
     }
 }
 
@@ -159,7 +182,9 @@ void Mandelbrot_Scene::updateActivePhaseAndField()
         computing_phase = 0;
         current_row = 0;
         final_frame_complete = false;
+
         field_9x9.setAllDepth(-1.0);
+        norm_field.clearFinalFlags();
 
         compute_t0 = std::chrono::steady_clock::now();
     }
@@ -184,8 +209,10 @@ bool Mandelbrot_Scene::processCompute()
     FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
 
     // Calculate first low-res phase in one-shot (no timeout)
-    // For high-res phases, break up work across multiple frames if necessary (kept track of with current_row)
-    int timeout = computing_phase == 0 ? 0 : 16;
+    // For high-res phases, break up work across multiple frames if necessary to not lock panning
+    int timeout = 0;
+    //if (!steady_zoom && computing_phase > 0)
+    //    timeout = 32;
 
     //if (!flatten)
     {
@@ -194,9 +221,12 @@ bool Mandelbrot_Scene::processCompute()
 
         // Run appropriate kernel for given settings
         finished_compute = frame_complete = table_invoke(
-            build_table(mandelbrot_pertubation, [&], pending_bmp, pending_field, iter_lim, numThreads(), timeout, current_row, stripe_params),
+            build_table(mandelbrot_perturbation, [&], pending_bmp, pending_field, norm_field, iter_lim, numThreads(), timeout, current_row, m1, m2, m3, stripe_params),
             float_type, mandel_features, flatten
+            //float_type, mandel_features, flatten
         );
+        if (finished_compute)
+            pending_field->mandel_features = mandel_features;
     }
     //else
     //{
@@ -220,60 +250,60 @@ bool Mandelbrot_Scene::processCompute()
             case 0:
                 /// finished first 9x9 low-res phase, forward computed pixels to 3x3 phase
                 field_3x3.setAllDepth(-1.0);
-                //bmp_9x9.forEachPixel([this](int x, int y)
-                //{
-                //    field_3x3(x*3+1, y*3+1) = field_9x9(x, y);
-                //
-                //    // Interior skipping optimization
-                //    if (!field_9x9.has_data(x, y))
-                //        field_9x9(x, y).flag_for_skip = true;
-                //});
-                //
-                //field_9x9.contractSkipFlags(interior_phases_contract_expand.c1);
-                //field_9x9.expandSkipFlags(interior_phases_contract_expand.e1);
-                //bmp_9x9.forEachPixel([this](int x, int y)
-                //{
-                //    if (field_9x9(x, y).flag_for_skip)
-                //    {
-                //        int x0 = x * 3, y0 = y * 3;
-                //        for (int py = y0; py <= y0 + 3; py++)
-                //            for (int px = x0; px <= x0 + 3; px++)
-                //                field_3x3(px, py).flag_for_skip = true;
-                //    }
-                //});
+                bmp_9x9.forEachPixel([this](int x, int y)
+                {
+                    field_3x3(x*3+1, y*3+1) = field_9x9(x, y);
+                
+                    // Interior skipping optimization
+                    if (!field_9x9.has_data(x, y))
+                        field_9x9.set_skip_flag(x, y, 1);
+                });
+                
+                field_9x9.contractSkipFlags(interior_phases_contract_expand.c1);
+                field_9x9.expandSkipFlags(interior_phases_contract_expand.e1);
+                bmp_9x9.forEachPixel([this](int x, int y)
+                {
+                    if (field_9x9.get_skip_flag(x, y))
+                    {
+                        int x0 = x * 3, y0 = y * 3;
+                        for (int py = y0; py <= y0 + 3; py++)
+                            for (int px = x0; px <= x0 + 3; px++)
+                                field_3x3.set_skip_flag(px, py, 1);
+                    }
+                });
 
                 break;
 
             case 1:
                 /// finished second 3x3 low-res phase, forward computed pixels to final 1x1 phase
                 field_1x1.setAllDepth(-1.0);
-                //bmp_3x3.forEachPixel([this](int x, int y)
-                //{
-                //    field_1x1(x*3+1, y*3+1) = field_3x3(x, y);
-                //
-                //    // Interior skipping optimization
-                //    if (!field_3x3.has_data(x, y))
-                //        field_3x3(x, y).flag_for_skip = true;
-                //});
-                //
-                //field_3x3.contractSkipFlags(interior_phases_contract_expand.c2);
-                //field_3x3.expandSkipFlags(interior_phases_contract_expand.e2);
-                //bmp_3x3.forEachPixel([this](int x, int y)
-                //{
-                //    if (field_3x3(x, y).flag_for_skip)
-                //    {
-                //        int x0 = x * 3, y0 = y * 3;
-                //        for (int py = y0; py <= y0 + 3; py++)
-                //        {
-                //            for (int px = x0; px <= x0 + 3; px++)
-                //            {
-                //                EscapeFieldPixel& pixel = field_1x1(px, py);
-                //                pixel.depth = INSIDE_MANDELBROT_SET_SKIPPED;
-                //                pixel.flag_for_skip = true;
-                //            }
-                //        }
-                //    }
-                //});
+                bmp_3x3.forEachPixel([this](int x, int y)
+                {
+                    field_1x1(x*3+1, y*3+1) = field_3x3(x, y);
+                
+                    // Interior skipping optimization
+                    if (!field_3x3.has_data(x, y))
+                        field_3x3.set_skip_flag(x, y, 1);
+                });
+                
+                field_3x3.contractSkipFlags(interior_phases_contract_expand.c2);
+                field_3x3.expandSkipFlags(interior_phases_contract_expand.e2);
+                bmp_3x3.forEachPixel([this](int x, int y)
+                {
+                    if (field_3x3.get_skip_flag(x, y))
+                    {
+                        int x0 = x * 3, y0 = y * 3;
+                        for (int py = y0; py <= y0 + 3; py++)
+                        {
+                            for (int px = x0; px <= x0 + 3; px++)
+                            {
+                                EscapeFieldPixel& pixel = field_1x1(px, py);
+                                pixel.depth = INSIDE_MANDELBROT_SET_SKIPPED;
+                                field_1x1.set_skip_flag(px, py, 1);
+                            }
+                        }
+                    }
+                });
 
                 break;
 
@@ -297,13 +327,27 @@ bool Mandelbrot_Scene::processCompute()
 
 bool Mandelbrot_Scene::mandelChanged()
 {
-    bool view_changed         = Changed(world_quad);
-    bool quality_opts_changed = Changed(quality, dynamic_iter_lim, mandel_features, maxdepth_optimize, maxdepth_show_optimized);
-    bool compute_opts_changed = Changed(stripe_params);
-    bool splines_changed      = Changed(x_spline.hash(), y_spline.hash());
-    bool flatten_changed      = Changed(flatten, show_period2_bulb, cardioid_lerp_amount);
-    bool features_changed     = Changed(mandel_features);
-    return (first_frame || view_changed || quality_opts_changed || compute_opts_changed || splines_changed || flatten_changed || features_changed);
+    //bool stripe_changed = Changed(stripe_weight);
+
+    bool view_changed            = Changed(world_quad);
+    bool quality_opts_changed    = Changed(quality, dynamic_iter_lim, maxdepth_optimize, maxdepth_show_optimized);
+    bool compute_opts_changed    = Changed(stripe_params);
+    //bool splines_changed         = Changed(x_spline.hash(), y_spline.hash());
+    //bool flatten_changed         = Changed(flatten, show_period2_bulb, cardioid_lerp_amount);
+    bool features_changed        = Changed(mandel_features);
+    bool normalize_field_changed = Changed(normalize_field_quality) || Changed(normalize_field_exponent) || Changed(normalize_field_scale);
+    bool m_changed = Changed(m1, m2, m3);
+    return (
+        first_frame ||
+        view_changed || 
+        quality_opts_changed || 
+        compute_opts_changed || 
+        //splines_changed || 
+        //flatten_changed || 
+        features_changed || 
+        normalize_field_changed ||
+        m_changed
+    );
 }
 
 bool Mandelbrot_Scene::shadingFormulaChanged()
@@ -315,91 +359,6 @@ bool Mandelbrot_Scene::shadingFormulaChanged()
     return (shade_formula_changed || weights_changed || cycle_iter_opts_changed || cycle_dist_opts_changed);
 }
 
-void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
-{
-    /// Never record a frame unless we finish computing a full frame
-    captureFrame(false);
 
-    // ────── automatic updates (animation / tweening) ──────
-    updateAnimation();
-    updateTweening(dt);
-
-    // ────── update states needed for compute ──────
-    updateCameraView();
-    updateFieldSizes(ctx);
-    updateEnabledKernelFeatures();
-    updateActivePhaseAndField();
-
-    // ────── resume unfinished compute ──────
-    bool finished_compute = false;
-    if (!final_frame_complete)
-        finished_compute = processCompute();
-
-    // ────── color cycle changed? ──────
-    bool gradient_changed        = updateGradient();
-    bool shading_formula_changed = shadingFormulaChanged();
-
-    bool renormalize = finished_compute || shading_formula_changed;
-    bool reshade     = renormalize || (gradient_changed && frame_complete);
-
-
-    // ────── renormalize cached data if necessary  ──────
-    if (renormalize)
-    {
-        FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
-
-        table_invoke( build_table(normalize_shading_limits, [&], active_field, active_bmp, camera, iter_params, dist_params, numThreads()),
-            float_type);
-
-        table_invoke( build_table(refreshFieldDepthNormalized, [&], active_field, active_bmp, mandel_features, iter_params, dist_params, numThreads()),
-            float_type);
-
-        if (final_frame_complete)
-            collectStats();
-    }
-
-    // ────── reshade if data renormalized, or gradient changed ──────
-    if (reshade)
-    {
-        table_invoke(
-            build_table(shadeBitmap, [&], active_field, active_bmp, &gradient_shifted, (float)iter_weight, (float)dist_weight, (float)stripe_weight, numThreads()),
-            (MandelShaderFormula)shade_formula, maxdepth_show_optimized
-        );
-    }
-
-    // unless we're doing a steady-zoom animation, capture basic animated shading every frame
-    if (!steady_zoom && reshade && final_frame_complete)
-        captureFrame(true);
-
-    first_frame = false;
-
-    if (!steady_zoom && show_interactive_cardioid && animate_cardioid_angle)
-    {
-        // Cardioid animation
-        ani_angle += ani_inc;
-        ani_angle = Math::wrapRadians2PI(ani_angle);
-
-        // If not tweening and we're animating the cardioid -> record frame
-        if (isRecording())
-            captureFrame(true);
-    }
-
-    //if (savefile_changed)
-    //    onSavefileChanged();
-
-    // stats for mouse position
-    if (active_field && active_bmp)
-    {
-        if (mouse->stage_x >= 0 && mouse->stage_y >= 0 && mouse->stage_x < active_bmp->width() && mouse->stage_y < active_bmp->height())
-        {
-            IVec2 pos = active_bmp->pixelPosFromWorld(DDVec2(mouse->world_x, mouse->world_y));
-            EscapeFieldPixel* p = active_field->get(pos.x, pos.y);
-            if (p) stats.hovered_field_pixel = *p;
-
-            active_bmp->worldPos((int)mouse->client_x, (int)mouse->client_y, stats.hovered_field_world_pos.x, stats.hovered_field_world_pos.y);
-
-        }
-    }
-}
 
 SIM_END;

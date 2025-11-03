@@ -75,6 +75,10 @@ std::string MandelState::serialize() const
 
         // Gradient
         info["p"] = gradient.serialize();
+
+        info["M"] = JSON::markCleanFloat(normalize_field_scale);
+        info["N"] = JSON::markCleanFloat(normalize_field_quality);
+        info["O"] = JSON::markCleanFloat(normalize_field_exponent);
     }
     else if (version >= 1)
     {
@@ -198,6 +202,11 @@ bool MandelState::_deserialize(std::string_view sv, bool COMPRESS_CONFIG)
         // Gradient
         if (info.contains("p"))
             gradient.deserialize(info.value("p", ""));
+
+        // Normalization
+        normalize_field_scale = info.value("M", 1.5);
+        normalize_field_quality = info.value("N", 0.5);
+        normalize_field_exponent = info.value("O", 3.0);
     }
 
     if (version >= 1)

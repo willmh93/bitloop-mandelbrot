@@ -8,8 +8,9 @@ struct MandelStats
     // dirty flags for different stats
     struct {
         bool depth_histogram = false;      // {1}
-        bool field_info = false;           // {2}
-        bool hovered_field_pixel = false;  // {3}
+        bool stripe_histogram = false;     // {2}
+        bool field_info = false;           // {3}
+        bool hovered_field_pixel = false;  // {4}
     } dirty;
 
     struct FieldInfo
@@ -24,10 +25,14 @@ struct MandelStats
     std::vector<int> depth_histogram;
     double depth_histogram_bucket_size;
 
-    // {2} field_info
+    // {2} pixel stripe angle ==> pixel count
+    //int stripe_histogram[360];
+    std::vector<double> stripe_histogram;
+
+    // {3} field_info
     FieldInfo field_info;
 
-    // {3} mandelbrot stats for the pixel the mouse is hovered over
+    // {4} mandelbrot stats for the pixel the mouse is hovered over
     EscapeFieldPixel hovered_field_pixel;
     DVec2 hovered_field_world_pos;
 
@@ -39,6 +44,8 @@ struct MandelStats
     MandelStats& operator=(const MandelStats& rhs)
     {
         if (rhs.dirty.depth_histogram)      depth_histogram = rhs.depth_histogram;
+        //if (rhs.dirty.stripe_histogram)     memcpy(stripe_histogram, rhs.stripe_histogram, sizeof(stripe_histogram));
+        if (rhs.dirty.stripe_histogram)     stripe_histogram = rhs.stripe_histogram;
         if (rhs.dirty.field_info)           field_info = rhs.field_info;
         if (rhs.dirty.hovered_field_pixel)  hovered_field_pixel = rhs.hovered_field_pixel;
 

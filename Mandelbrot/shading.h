@@ -8,17 +8,7 @@
 
 SIM_BEG;
 
-enum class MandelKernelFeatures
-{
-    NONE = 0,
-    ITER = 1,
-    DIST = 2,
-    STRIPES = 4,
-    MIX_ALL = 7,
-    COUNT
-};
 
-bl_enable_enum_bitops(MandelKernelFeatures);
 
 enum class MandelTransform
 {

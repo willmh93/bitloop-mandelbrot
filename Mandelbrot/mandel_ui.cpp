@@ -16,6 +16,13 @@ std::string dataToURL(std::string data_buf)
 
 void Mandelbrot_Scene::UI::populateSavingLoading()
 {
+    {
+        bl_scoped(m1, m2, m3);
+        ImGui::SliderInt("m1", &m1, 1, 64);
+        ImGui::SliderInt("m2", &m2, 1, 64);
+        ImGui::SliderInt("m3", &m3, 1, 64);
+    }
+
     if (ImGui::Section("Saving & Loading", true, 0))
     {
         if (ImGui::Button("Save"))
@@ -197,6 +204,8 @@ void Mandelbrot_Scene::UI::populateExamples()
                     {
                         bl_schedule([data](Mandelbrot_Scene& scene)
                         {
+                            main_window()->setFixedFrameTimeDelta(true);
+
                             scene.tween_frames_elapsed = 0;
 
                             // Give destination same reference zoom level
@@ -221,11 +230,13 @@ void Mandelbrot_Scene::UI::populateExamples()
                     {
                         bl_schedule([data](Mandelbrot_Scene& scene)
                         {
+                            scene.loadState(data);
+
                             // Give destination same reference zoom level
-                            MandelState target;
-                            target.camera.setReferenceZoom(scene.camera.getReferenceZoom<f128>());
-                            target.deserialize(data);
-                            scene.startTween(target);
+                            ///MandelState target;
+                            ///target.camera.setReferenceZoom(scene.camera.getReferenceZoom<f128>());
+                            ///target.deserialize(data);
+                            ///scene.startTween(target);
                         });
                     }
                 }
@@ -285,14 +296,14 @@ void Mandelbrot_Scene::UI::populateCameraView()
 }
 void Mandelbrot_Scene::UI::populateQualityOptions()
 {
-    bl_scoped(dynamic_iter_lim);
-    bl_scoped(quality);
-    bl_scoped(iter_lim);
-    bl_scoped(camera);
-    bl_scoped(tweening);
-
     if (ImGui::Section("Quality", false))
     {
+        bl_scoped(dynamic_iter_lim);
+        bl_scoped(quality);
+        bl_scoped(iter_lim);
+        bl_scoped(camera);
+        bl_scoped(tweening);
+
         if (ImGui::Checkbox("Dynamic Iteration Limit", &dynamic_iter_lim))
         {
             if (!dynamic_iter_lim)
@@ -340,6 +351,23 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
 
         ImGui::Checkbox("Highlight optimized regions", &maxdepth_show_optimized);
     }
+
+    if (ImGui::Section("Normalization Sampling", false))
+    {
+        ImGui::PushID("normalization");
+        bl_scoped(normalize_field_scale);
+        bl_scoped(normalize_field_quality);
+        bl_scoped(normalize_field_exponent);
+        bl_scoped(preview_normalization_field);
+        static double init_normalize_field_scale = normalize_field_scale;
+        static double init_normalize_field_quality = normalize_field_quality;
+        static double init_normalize_field_exponent = normalize_field_exponent;
+        ImGui::Checkbox("Preview", &preview_normalization_field);
+        ImGui::RevertableSliderDouble("Scale", &normalize_field_scale, &init_normalize_field_scale, 0.5, 4.0, "%.2f");
+        ImGui::RevertableSliderDouble("Quality", &normalize_field_quality, &init_normalize_field_quality, 0.1, 1.0, "%.2f");
+        ImGui::RevertableSliderDouble("Exponent", &normalize_field_exponent, &init_normalize_field_exponent, 1.0, 4.0, "%.2f");
+        ImGui::PopID();
+    }
 }
 void Mandelbrot_Scene::UI::populateColorCycleOptions()
 {
@@ -352,18 +380,14 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
         bl_scoped(dynamic_iter_lim);
 
         // Weights / Mix formula
-        bl_scoped(iter_weight);
-        bl_scoped(dist_weight);
-        bl_scoped(stripe_weight);
+        bl_scoped(iter_weight, dist_weight, stripe_weight);
         bl_scoped(shade_formula);
 
         // Iter
         bl_scoped(use_smoothing); /// todo
 
-        // Stripe
-        bl_scoped(iter_params);
-        bl_scoped(dist_params);
-        bl_scoped(stripe_params);
+        // Params
+        bl_scoped(iter_params, dist_params, stripe_params);
 
         double iter_ratio, dist_ratio, stripe_ratio;
         shadingRatios(
@@ -472,7 +496,7 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
 
             ImGui::SliderFloat("Frequency", &stripe_params.freq, 1.0f, 100.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
             ImGui::SliderAngle("Phase", &stripe_params.phase, 0.0f, Math::PI * 2.0f, 0, ImGuiSliderFlags_AlwaysClamp);
-            ImGui::SliderFloat("Contrast", &stripe_params.contrast, 1.0f, 100.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderFloat("Contrast", &stripe_params.contrast, 0.1f, 100.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
         }
 
         ImGui::Combo("###MandelFormula", &shade_formula, MandelFormulaNames, (int)MandelShaderFormula::COUNT);
@@ -486,13 +510,11 @@ void Mandelbrot_Scene::UI::populateGradientShiftOptions()
         bl_pull(gradient_shifted); // Recalculated in viewportProcess, no need to push
         bl_pull(gradient);
 
-        bl_scoped(hue_shift);
-        bl_scoped(gradient_shift);
+        bl_scoped(hue_shift, gradient_shift);
 
         // Animation
         bl_scoped(show_color_animation_options);
-        bl_scoped(gradient_shift_step);
-        bl_scoped(hue_shift_step);
+        bl_scoped(gradient_shift_step, hue_shift_step);
 
         ImGui::Checkbox("Animate", &show_color_animation_options);
 
@@ -517,8 +539,13 @@ void Mandelbrot_Scene::UI::populateGradientShiftOptions()
         }
 
         ImGui::SetNextItemWidthForSpace(required_space);
-        if (ImGui::SliderDouble("Hue shift", &hue_shift, 0.0, 360, "%.3f"))
+        double hue_shift_rad = Math::toRadians(hue_shift);
+        static double initial_hue_shift_rad = hue_shift_rad;
+        if (ImGui::RevertableSliderAngle("Hue shift", &hue_shift_rad, &initial_hue_shift_rad, 0.0, Math::TWO_PI, 3))
+        {
+            hue_shift = Math::toDegrees(hue_shift_rad);
             transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
+        }
 
         if (show_color_animation_options)
         {
@@ -540,7 +567,6 @@ void Mandelbrot_Scene::UI::populateGradientPicker()
     if (ImGui::Section("Base Color Gradient", true, 2.0f))
     {
         bl_scoped(gradient);
-        //bl_scoped(colors_updated);
 
         ImGui::Text("Load Preset");
         static int selecting_template = -1;
@@ -599,8 +625,7 @@ void Mandelbrot_Scene::UI::populateExperimental()
     if (ImGui::Section("Experimental")) {
 
         bl_scoped(show_period2_bulb);
-        bl_scoped(flatten_amount);
-        bl_scoped(flatten);
+        bl_scoped(flatten, flatten_amount);
         bl_scoped(cardioid_lerp_amount);
 
         ImGui::Checkbox("Flatten", &flatten);
@@ -629,8 +654,7 @@ void Mandelbrot_Scene::UI::populateExperimental()
             ImGui::SeparatorText("XX, YY Spline Relationship");
             /// --------------------------------------------------------------
 
-            bl_scoped(x_spline);
-            bl_scoped(y_spline);
+            bl_scoped(x_spline, y_spline);
 
             static ImRect vr = { 0.0f, 0.8f, 0.8f, 0.0f };
             ImSpline::SplineEditorPair("X/Y Spline", &x_spline, &y_spline, &vr, 900.0f);
@@ -649,7 +673,11 @@ void Mandelbrot_Scene::UI::populateSplinesDev()
 
     ImGui::SeparatorText("Position Tween");
     ImSpline::SplineEditor("tween_pos", &tween_pos_spline, &vr);
+
+    ImGui::SeparatorText("Lift Tween");
     ImSpline::SplineEditor("tween_zoom_lift", &tween_zoom_lift_spline, &vr);
+
+    ImGui::SeparatorText("Base Zoom Tween");
     ImSpline::SplineEditor("tween_base_zoom", &tween_base_zoom_spline, &vr);
 
     //ImGui::InputTextMultiline("###pos_buf", pos_tween_buf, 1024, ImVec2(0, 0), ImGuiInputTextFlags_AllowTabInput));

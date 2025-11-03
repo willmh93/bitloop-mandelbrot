@@ -46,6 +46,12 @@ struct MandelState
     bool        flatten = false;
     double      flatten_amount = 0.0;
 
+    /// ─────────────────────── Normalization Info ───────────────────────
+
+    double normalize_field_scale = 1.5;
+    double normalize_field_quality = 0.5;
+    double normalize_field_exponent = 1.0;
+
     ///////////////////////////////////////////////////////////////////////////
 
     bool operator==(const MandelState&) const = default;

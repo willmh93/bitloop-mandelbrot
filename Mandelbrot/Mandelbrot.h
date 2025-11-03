@@ -36,11 +36,12 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     std::string load_example_name;
 
     // ────── threads ──────
-    static constexpr int MAX_THREADS = 0; // 0 = Use max threads
+    static constexpr int MAX_THREADS = 0;// 0 = Use max threads
     inline int numThreads() const {
         if constexpr (MAX_THREADS > 0) return MAX_THREADS;
         return Thread::idealThreadCount();
     }
+    int m1 = 32, m2 = 32, m3 = 32;
 
     // ────── resources ──────
     NanoFont font;
@@ -100,6 +101,9 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     EscapeField* pending_field = nullptr;
     EscapeField* active_field = nullptr;
 
+    NormalizationField norm_field;
+    bool preview_normalization_field = false;
+
     MandelStats stats;
 
     // ────── dynamicly set at runtime ──────
@@ -131,7 +135,7 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 
     // ────── tweening ──────
     void startTween(const MandelState& target);
-    void lerpState(const MandelState& a, const MandelState& b, double f, bool complete);
+    double lerpState(const MandelState& a, const MandelState& b, double f, bool complete);
 
     // ────── camera navigation easing ──────
     CameraNavigator navigator;
@@ -144,7 +148,9 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 
     // ────── deep-zoom animation (temporary until timeline feature added) ──────
     bool steady_zoom = false;
-    f128 steady_zoom_mult_speed{ 0.01 };
+    //f128 steady_zoom_mult_speed{ 0.01 };
+    f128 steady_zoom_mult_speed{ 0.05 };
+    float steady_zoom_pct = 0;
     int tween_frames_elapsed = 0;
     int tween_expected_frames = 0;
     Math::MovingAverage::MA<double> expected_time_left_ma = Math::MovingAverage::MA<double>(5);
@@ -183,6 +189,7 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 
         // stats
         std::vector<int> depth_xs, depth_ys;
+        std::vector<int> stripe_xs;
         //std::vector<double> max_depth_xs, max_depth_ys;
 
         // UI sections
@@ -219,7 +226,7 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     void viewportProcess(Viewport* ctx, double dt) override;
     void viewportDraw(Viewport* ctx) const override;
 
-    void collectStats();
+    void collectStats(bool renormalized);
 
     // ────── input ──────
     void onEvent(Event e) override;

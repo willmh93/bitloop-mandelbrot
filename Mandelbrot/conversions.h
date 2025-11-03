@@ -5,23 +5,47 @@ SIM_BEG;
 
 using namespace bl;
 
-inline f128 toNormalizedZoom(f128 zoom)
-{
-    return log(zoom) + 1;
+//inline f128 toNormalizedZoom(f128 zoom)
+//{
+//    return log10(zoom) + 1;
+//    //return log(zoom) + 1;
+//}
+//inline f128 fromNormalizedZoom(f128 normalized_zoom)
+//{
+//    return pow(normalized_zoom - 1, 10);
+//    //return exp(normalized_zoom - 1);
+//}
+//
+//inline f128 toHeight(f128 zoom)
+//{
+//    return f128(1.0) / toNormalizedZoom(zoom);
+//}
+//
+//inline f128 fromHeight(f128 height)
+//{
+//    return fromNormalizedZoom(f128(1.0) / height);
+//}
+
+// Baselines
+constexpr f128 Z0 = f128(1);   // zoom that corresponds to normalized = 1
+constexpr f128 Hc = f128(1);   // choose any constant offset for height
+
+// Normalized zoom (decades): n = 1 + log10(zoom/Z0)
+inline f128 toNormalizedZoom(f128 zoom) {
+    return f128(1) + log10(zoom / Z0);
 }
-inline f128 fromNormalizedZoom(f128 normalized_zoom)
-{
-    return exp(normalized_zoom - 1);
+inline f128 fromNormalizedZoom(f128 n) {
+    return Z0 * pow(f128(10), n - f128(1));
 }
 
-inline f128 toHeight(f128 zoom)
-{
-    return 1.0 / toNormalizedZoom(zoom);
+// Height that DECREASES when you zoom in, with linear steps mapping to constant ratios:
+inline f128 toHeight(f128 zoom) {
+    // height = Hc - log10(zoom/Z0)
+    return Hc - log10(zoom / Z0);
 }
-
-inline f128 fromHeight(f128 height)
-{
-    return fromNormalizedZoom(1.0 / height);
+inline f128 fromHeight(f128 h) {
+    // zoom = Z0 * 10^(Hc - h)
+    return Z0 * pow(f128(10), Hc - h);
 }
 
 inline int mandelbrotIterLimit(f128 zoom)

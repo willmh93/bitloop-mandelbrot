@@ -54,6 +54,76 @@ void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
     }*/
 }
 
+void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
+{
+    /// Never record a frame unless we finish computing a full frame
+    captureFrame(false);
+
+    // ────── automatic updates (animation / tweening) ──────
+    updateAnimation();
+    updateTweening(dt);
+
+    // ────── update states needed for compute ──────
+    updateCameraView();
+    updateFieldSizes(ctx);
+    updateEnabledKernelFeatures();
+    updateActivePhaseAndField();
+
+    // ────── resume unfinished compute ──────
+    bool finished_compute = false;
+    bool active_missing_features = (pending_field->mandel_features != mandel_features);
+    if (!final_frame_complete || active_missing_features)
+        finished_compute = processCompute();
+
+    // ────── color cycle changed? ──────
+    bool gradient_changed = updateGradient();
+    bool shading_formula_changed = shadingFormulaChanged();
+
+    bool renormalize = finished_compute || shading_formula_changed;
+    bool reshade = renormalize || (gradient_changed && frame_complete);
+
+
+    // ────── renormalize cached data if necessary  ──────
+    if (renormalize)
+    {
+        FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
+
+        table_invoke(build_table(calculate_normalize_info, [&], active_field, norm_field, camera, iter_params, dist_params, numThreads()),
+            float_type);
+
+        table_invoke(build_table(normalize_field, [&], active_field, active_bmp, iter_params, dist_params, numThreads()),
+            float_type, mandel_features, iter_params.cycle_iter_normalize_depth);
+    }
+
+    // ────── reshade if data renormalized, or gradient changed ──────
+    if (reshade)
+    {
+        table_invoke(
+            build_table(shadeBitmap, [&], active_field, active_bmp, &gradient_shifted, (float)iter_weight, (float)dist_weight, (float)stripe_weight, numThreads()),
+            (MandelShaderFormula)shade_formula, maxdepth_show_optimized
+        );
+    }
+
+    // unless we're doing a steady-zoom animation, capture basic animated shading every frame
+    if (!steady_zoom && reshade && final_frame_complete)
+        captureFrame(true);
+
+    first_frame = false;
+
+    if (!steady_zoom && show_interactive_cardioid && animate_cardioid_angle)
+    {
+        // Cardioid animation
+        ani_angle += ani_inc;
+        ani_angle = Math::wrapRadians2PI(ani_angle);
+
+        // If not tweening and we're animating the cardioid -> record frame
+        if (isRecording())
+            captureFrame(true);
+    }
+
+    // Gather stats / realtime info
+    collectStats(renormalize);
+}
 
 void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
 {
@@ -71,6 +141,21 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
 
     if (show_axis && zoom_mag < 1.0e7)
         ctx->drawWorldAxis(0.5, 0, 0.5);
+
+    if (preview_normalization_field)
+    {
+        ctx->stageMode();
+        ctx->setFillStyle(255, 255, 255, 70);
+        for (auto& p : norm_field.world_field)
+        {
+            float rad = std::max(1.0f, p.weight * 4.0f);
+            ctx->fillEllipse<f128>(p.stage_pos, rad);
+        }
+
+        //ctx->setStrokeStyle(255, 255, 255);
+        //ctx->strokeQuad(norm_field.bounds.stageQuad());
+		ctx->worldMode();
+    }
 
     //ctx->worldHudMode();
     //for (DVec2 p : active_field->plots)
