@@ -4,6 +4,8 @@ SIM_BEG;
 
 void Mandelbrot_Scene::UI::populateStats()
 {
+    //return;
+
     if (ImGui::Section("Statistics", true))
     {
         bl_scoped(stats);
@@ -16,7 +18,6 @@ void Mandelbrot_Scene::UI::populateStats()
             bl_pull(camera);
             bl_pull(dt_avg);
             bl_pull(computing_phase);
-            bl_pull(current_row);
 
             // float precision
             const char* float_precision = FloatingPointTypeNames[(int)getRequiredFloatType((MandelKernelFeatures)mandel_features, camera.relativeZoom<f128>())];
@@ -24,7 +25,6 @@ void Mandelbrot_Scene::UI::populateStats()
 
             // current phase/row
             ImGui::Text("Current phase:  %d/2", computing_phase);
-            ImGui::Text("Current row:    %d", current_row);
 
             // active features
             {
@@ -150,15 +150,17 @@ void Mandelbrot_Scene::UI::populateStats()
             }
         }*/
 
-        {
+        /* // todo: crashes since perturbation
+		{
             if (ImPlot::BeginPlot("Stripe Angle"))
             {
                 ImPlot::PlotHistogram(
                     "##stripe_hist",
                     stats.stripe_histogram.data(),
                     (int)stats.stripe_histogram.size(),
-                    1000, 1.0, ImPlotRange(0.0, 1.0)/*,
-                    ImPlotHistogramFlags_NoOutliers*/);
+                    1000, 1.0, ImPlotRange(0.0, 1.0),
+                    //ImPlotHistogramFlags_NoOutliers
+                );
                 ImPlot::EndPlot();
 
                 //stripe_xs.clear();
@@ -176,7 +178,7 @@ void Mandelbrot_Scene::UI::populateStats()
                 //ImPlot::PlotLine("##stripe_graph", stripe_xs.data(), stats.stripe_histogram, 360);
                 //ImPlot::EndPlot();
             }
-        }
+        }*/
     }
 }
 

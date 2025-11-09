@@ -14,13 +14,142 @@ std::string dataToURL(std::string data_buf)
     #endif
 }
 
+// Call once per frame where you want the button to appear.
+// Returns true if it toggled.
+// Example:
+//   static bool is_fullscreen = false;
+//   DrawFullscreenOverlayButton(&is_fullscreen, ImVec2(24, 24), 30.0f, 0.66f);
+
+void Mandelbrot_Scene::UI::sidebar()
+{
+    bl_scoped(tweening);
+
+    if (tweening)
+        ImGui::BeginDisabled();
+
+    populateSavingLoading();
+    populateExamples();
+    populateCameraView();
+    populateQualityOptions();
+    populateColorCycleOptions();
+    populateGradientShiftOptions();
+    populateGradientPicker();
+    populateStats();
+    //populateExperimental();
+
+    populateMouseOrbit();
+
+    if (tweening)
+        ImGui::EndDisabled();
+
+    // ======== Developer ========
+    #if MANDEL_DEV_EDIT_TWEEN_SPLINES
+    populateSplinesDev();
+    #endif
+}
+
+
+bool DrawFullscreenOverlayButton(bool* fullscreen,
+    ImVec2 screen_pos,
+    float size = 30.0f,
+    float alpha = 0.66f)
+{
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImGuiIO& io = ImGui::GetIO();
+
+    const ImRect r(screen_pos, screen_pos + ImVec2(size, size));
+
+    // Colors
+    const ImU32 col_bg = ImGui::GetColorU32(ImVec4(0, 0, 0, alpha));
+    const ImU32 col_bg_h = ImGui::GetColorU32(ImVec4(0, 0, 0, alpha + 0.15f));
+    const ImU32 col_bg_p = ImGui::GetColorU32(ImVec4(0, 0, 0, alpha + 0.25f));
+    const ImU32 col_bd = ImGui::GetColorU32(ImVec4(1, 1, 1, 0.25f));
+    const ImU32 col_fg = ImGui::GetColorU32(ImGui::GetStyle().Colors[ImGuiCol_Text]);
+
+    // Hit test
+    const bool hovered = r.Contains(io.MousePos);
+    const bool held = hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    const bool pressed = hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+
+    // Background
+    const float rounding = size / 6.0f;
+    dl->AddRectFilled(r.Min, r.Max, held ? col_bg_p : (hovered ? col_bg_h : col_bg), rounding);
+    dl->AddRect(r.Min, r.Max, col_bd, rounding);
+
+    // Icon geometry
+    const float t = scale_size(2.0f);     // stroke thickness
+    const float inset = size * 0.08f;         // distance from edges
+    const float len = size * 0.15f;         // target leg length
+
+    const float max_len = ImMax(0.0f, (size - 2.0f * inset) * 0.5f);
+    const float L = ImMin(len, max_len);
+
+    auto lineL = [&](const ImVec2& c, const ImVec2& dx, const ImVec2& dy)
+    {
+        dl->AddLine(c, c + dx * L, col_fg, t);
+        dl->AddLine(c, c + dy * L, col_fg, t);
+    };
+
+    // Outer inset corners
+    const ImVec2 tl = r.Min + ImVec2(inset, inset);
+    const ImVec2 tr = ImVec2(r.Max.x - inset, r.Min.y + inset);
+    const ImVec2 bl = ImVec2(r.Min.x + inset, r.Max.y - inset);
+    const ImVec2 br = r.Max - ImVec2(inset, inset);
+
+    if (!*fullscreen)
+    {
+        // Expand: inner box corners (open outward)
+        const ImVec2 ia = r.Min + ImVec2(inset + L, inset + L);
+        const ImVec2 ib = r.Max - ImVec2(inset + L, inset + L);
+
+        lineL(ImVec2(ia.x, ia.y), ImVec2(+1, 0), ImVec2(0, +1)); // top-left
+        lineL(ImVec2(ib.x, ia.y), ImVec2(-1, 0), ImVec2(0, +1)); // top-right
+        lineL(ImVec2(ia.x, ib.y), ImVec2(+1, 0), ImVec2(0, -1)); // bottom-left
+        lineL(ImVec2(ib.x, ib.y), ImVec2(-1, 0), ImVec2(0, -1)); // bottom-right
+    }
+    else
+    {
+        // Collapse: from outer corners inward
+        const float inset2 = inset * 2.0f;
+        const ImVec2 ia = r.Min + ImVec2(inset2 + L, inset2 + L);
+        const ImVec2 ib = r.Max - ImVec2(inset2 + L, inset2 + L);
+
+        lineL(ImVec2(ia.x, ia.y), ImVec2(-1, 0), ImVec2(0, -1)); // top-left inward
+        lineL(ImVec2(ib.x, ia.y), ImVec2(+1, 0), ImVec2(0, -1)); // top-right inward
+        lineL(ImVec2(ia.x, ib.y), ImVec2(-1, 0), ImVec2(0, +1)); // bottom-left inward
+        lineL(ImVec2(ib.x, ib.y), ImVec2(+1, 0), ImVec2(0, +1)); // bottom-right inward
+    }
+
+    if (pressed)
+    {
+        *fullscreen = !*fullscreen;
+        return true;
+    }
+    return false;
+}
+
+void Mandelbrot_Scene::UI::overlay()
+{
+    IVec2 ctx_size = main_window()->viewportSize();
+    float btn_size = 60.0f;
+    float btn_space = 10.0f;
+
+    SDL_WindowFlags flags = SDL_GetWindowFlags(platform()->sdl_window());
+    bool fullscreen = (flags & SDL_WINDOW_FULLSCREEN);
+    if (DrawFullscreenOverlayButton(&fullscreen, scale_size(ctx_size.x - btn_size - btn_space, btn_space), scale_size(btn_size)))
+    {
+        SDL_SetWindowFullscreen(platform()->sdl_window(), fullscreen);
+        main_window()->setSidebarVisible(!fullscreen);
+    }
+}
+
 void Mandelbrot_Scene::UI::populateSavingLoading()
 {
     {
         bl_scoped(m1, m2, m3);
         ImGui::SliderInt("m1", &m1, 1, 64);
         ImGui::SliderInt("m2", &m2, 1, 64);
-        ImGui::SliderInt("m3", &m3, 1, 64);
+        ImGui::SliderInt("m3", &m3, 1, 256);
     }
 
     if (ImGui::Section("Saving & Loading", true, 0))
@@ -258,11 +387,6 @@ void Mandelbrot_Scene::UI::populateCameraView()
     {
         bl_scoped(show_axis);
 
-        if (ImGui::Button("Fullscreen"))
-        {
-            SDL_SetWindowFullscreen(platform()->sdl_window(), true);
-        }
-        ImGui::SameLine();
         ImGui::Checkbox("Show Axis", &show_axis);
 
         #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
@@ -350,6 +474,12 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
         }
 
         ImGui::Checkbox("Highlight optimized regions", &maxdepth_show_optimized);
+
+        bl_scoped(kernel_mode);
+        ImGui::Text("Kernel");
+        ImGui::RadioButton("Auto", &(int&)kernel_mode, (int)MandelKernelMode::AUTO);
+        ImGui::RadioButton("Full", &(int&)kernel_mode, (int)MandelKernelMode::FULL);
+        ImGui::RadioButton("Perturbation", &(int&)kernel_mode, (int)MandelKernelMode::PERTURBATION);
     }
 
     if (ImGui::Section("Normalization Sampling", false))
@@ -496,7 +626,7 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
 
             ImGui::SliderFloat("Frequency", &stripe_params.freq, 1.0f, 100.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
             ImGui::SliderAngle("Phase", &stripe_params.phase, 0.0f, Math::PI * 2.0f, 0, ImGuiSliderFlags_AlwaysClamp);
-            ImGui::SliderFloat("Contrast", &stripe_params.contrast, 0.1f, 100.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderFloat("Contrast", &stripe_params.contrast, 0.1f, 10.0f, "%.3f", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
         }
 
         ImGui::Combo("###MandelFormula", &shade_formula, MandelFormulaNames, (int)MandelShaderFormula::COUNT);
@@ -689,32 +819,65 @@ void Mandelbrot_Scene::UI::populateSplinesDev()
     if (ImGui::Button("Copy base zoom spline")) ImGui::SetClipboardText(tween_base_zoom_spline.serialize(SplineSerializationMode::CPP_ARRAY, 3).c_str());
 }
 
-void Mandelbrot_Scene::UI::sidebar()
+
+void Mandelbrot_Scene::UI::populateMouseOrbit()
 {
-    bl_scoped(tweening);
+    using cplx = cplx<f64>;
 
-    if (tweening)
-        ImGui::BeginDisabled();
-        
-    populateSavingLoading();
-    populateExamples();
-    populateCameraView();
-    populateQualityOptions();
-    populateColorCycleOptions();
-    populateGradientShiftOptions();
-    populateGradientPicker();
-    populateStats();
-    //populateExperimental();
-        
-    if (tweening)
-        ImGui::EndDisabled();
+    bl_pull(stats);
+    auto [x0, y0] = stats.hovered_field_world_pos;
 
-    // ======== Developer ========
-    #if MANDEL_DEV_EDIT_TWEEN_SPLINES
-    populateSplinesDev();
-    #endif
+    std::vector<f64> xs, ys;
+
+    cplx z{ 0.0, 0.0 }; 
+    cplx c{ x0, y0 };
+
+    xs.push_back(0.0);
+    ys.push_back(0.0);
+    for (int i = 0; i < 1000; i++)
+    {
+        cplx p1 = z;
+        cplx p2 = process_z(1, z, c);
+        cplx p3 = process_z(2, z, c);
+
+        z = Math::arcLerp(1, p1, p2, p3);
+        //z = process_z(1, z, c);
+
+        xs.push_back(z.x);
+        ys.push_back(z.y);
+
+        f64 r2 = z.x * z.x + z.y * z.y;
+        if (r2 > 81)
+        {
+            break;
+        }
+    }
+
+    if (ImPlot::BeginPlot("Mouse orbit"))
+    {
+        ImPlot::SetupAxis(ImAxis_X1, "cx", ImPlotAxisFlags_AutoFit);
+        ImPlot::SetupAxis(ImAxis_Y1, "cy", ImPlotAxisFlags_AutoFit);
+        //ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
+        if (xs.size())
+        {
+            ImPlot::PlotLine("##mouse_plot", xs.data(), ys.data(), (int)xs.size());
+
+            /*double max_depth = (--stats.depth_histogram.end())->first;
+            if (stats.hovered_field_pixel.depth < max_depth)
+            {
+
+                auto nearest_it = stats.depth_histogram.lower_bound((int)stats.hovered_field_pixel.depth);
+                if (nearest_it != stats.depth_histogram.end())
+                {
+                    double px = nearest_it->first;
+                    double py = nearest_it->second;
+                    ImPlot::PlotInfLines("##depth_mark", &px, 1); // vertical line at X = mark
+                    ImPlot::PlotScatter("##depth_point", &px, &py, 1);
+                }
+            }*/
+        }
+        ImPlot::EndPlot();
+    }
 }
-
-
 
 SIM_END;

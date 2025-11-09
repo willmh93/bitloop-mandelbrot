@@ -36,12 +36,8 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     std::string load_example_name;
 
     // ────── threads ──────
-    static constexpr int MAX_THREADS = 0;// 0 = Use max threads
-    inline int numThreads() const {
-        if constexpr (MAX_THREADS > 0) return MAX_THREADS;
-        return Thread::idealThreadCount();
-    }
-    int m1 = 32, m2 = 32, m3 = 32;
+    static constexpr int MAX_THREADS = 0; // 0 = max threads
+    int m1 = 1, m2 = 1, m3 = 1;
 
     // ────── resources ──────
     NanoFont font;
@@ -110,7 +106,8 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     bool    display_intro = true;
     double  log_color_cycle_iters = 0.0;
     int     iter_lim = 0; // Actual iter limit
-    int     current_row = 0;
+    TileBlockProgress P;
+    //int     current_tile = 0;
 
     // phase 0 = 9x smaller
     // phase 1 = 3x smaller
@@ -127,6 +124,8 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     }  interior_phases_contract_expand;
 
     bool maxdepth_show_optimized = false;
+
+    MandelKernelMode kernel_mode = MandelKernelMode::AUTO;
 
     // ────── timers ──────
     std::chrono::steady_clock::time_point compute_t0;
@@ -172,6 +171,8 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     struct UI : Interface
     {
         using Interface::Interface;
+
+        void overlay();
         void sidebar();
 
 
@@ -204,6 +205,7 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 
         void populateExperimental();
         void populateSplinesDev();
+        void populateMouseOrbit();
     };
 
     // ────── simulation processing ──────

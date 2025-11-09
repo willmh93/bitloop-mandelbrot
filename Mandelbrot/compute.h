@@ -8,28 +8,40 @@
 
 SIM_BEG;
 
-template<class T> struct cplx 
-{ 
-    T x, y; 
-};
+//template<class T> struct cplx 
+//{ 
+//    using cpx = cplx<T>;
+//    T x, y;
+//    cpx operator +(const cpx& r) const { return { x + r.x, y + r.y }; }
+//    cpx operator -(const cpx& r) const { return { x - r.x, y - r.y }; }
+//    cpx operator *(const cpx& r) const { return { x * r.x, y * r.y }; }
+//    cpx operator /(const cpx& r) const { return { x / r.x, y / r.y }; }
+//    cpx operator *(float v) const { return { x * (T)v, y * (T)v }; }
+//    operator -()
+//    {
+//        return { -x, -y };
+//    }
+//};
+
+
+
+
+template<class T>
+using cplx = Vec2<T>;
 
 inline FloatingPointType getRequiredFloatType(MandelKernelFeatures features, f128 zoom)
 {
-    f128 MAX_ZOOM_FLOAT;
     f128 MAX_DOUBLE_ZOOM;
-
+    
     if ((bool)(features & MandelKernelFeatures::DIST))
     {
-        MAX_ZOOM_FLOAT = 10.0;
         MAX_DOUBLE_ZOOM = 2e10;
     }
     else
     {
-        MAX_ZOOM_FLOAT = 10000;
         MAX_DOUBLE_ZOOM = 1e11;
     }
-
-    if (zoom < MAX_ZOOM_FLOAT) return FloatingPointType::F32;
+    
     if (zoom < MAX_DOUBLE_ZOOM) return FloatingPointType::F64;
 
     return FloatingPointType::F128;
@@ -123,11 +135,21 @@ template<class T> FAST_INLINE T clamp01(T v)
 template<class T>
 inline constexpr bool is_flt128_v = std::is_same_v<std::remove_cvref_t<T>, bl::f128>;
 
+template<typename T>
+inline cplx<T> process_z(int steps, cplx<T> z, const cplx<T>& c)
+{
+    for (int i = 0; i < steps; i++)
+    {
+        mandel_step(z, c);
+    }
+
+    return z;
+}
+
 // plain mandelbrot kernet for ITER + DIST + STRIPE
 template<class T, MandelKernelFeatures S>
 FAST_INLINE void mandel_kernel(
-    const T& x0,
-    const T& y0,
+    T x0, T y0,
     int iter_lim,
     f64& depth,
     f64& dist,
@@ -157,6 +179,8 @@ FAST_INLINE void mandel_kernel(
         if constexpr (NEED_DIST)
             mandel_step_derivative(z, dz);
 
+
+
         cplx<T> z0 = z;
 
         // step
@@ -168,8 +192,8 @@ FAST_INLINE void mandel_kernel(
 
         if constexpr (NEED_STRIPES)
         {
-            f32 a = (f32)Math::atan2f_fast((f32)z.y, (f32)z.x);
-            last_added = 0.5f + 0.5f * std::sin(sp.freq * a + sp.phase);
+            f32 a = std::atan2f((f32)z.y, (f32)z.x);
+            last_added = 0.5f + 0.5f * std::sinf(sp.freq * a + sp.phase);
             sum += last_added;
             ++sum_samples;
         }
@@ -221,7 +245,7 @@ FAST_INLINE void mandel_kernel(
     
         f32 mix = frac * avg + (1.0f - frac) * prev;
         mix = 0.5f + 0.5f * std::tanh(sp.contrast * (mix - 0.5f));
-        stripe = T{ clamp01(mix) };
+        stripe = clamp01(mix);
     }
 }
 
@@ -522,99 +546,131 @@ FAST_INLINE bool mandel_kernel_approx_rebase(
 }
 
 
-template<typename T, MandelKernelFeatures F, bool flatten>
+template<typename T, MandelKernelFeatures F, bool perturbation, bool flatten>
 bool mandelbrot_perturbation(
     CanvasImage128* bmp, 
     EscapeField* field, 
     NormalizationField& norm_field,
     int iter_lim,
-    int threads, 
     int timeout,
-    int& current_tile, 
+    TileBlockProgress& P,
     int m1, int m2, int m3,
     StripeParams stripe_params = {})
 {
-    typedef f64 T_lo; // f32 requires more rebasing, ends up slower
+    typedef min_float_t<f64, T> T_lo;
 
-    RefOrbitLo<T_lo> orbit_lo;
+    int threads = Thread::threadCount();
 
-    // 1) calculate high-precision reference
-    Vec2<T> anchor; bmp->worldPos<T>(bmp->width() / 2, bmp->height() / 2, anchor.x, anchor.y);
-    {
-        RefOrbit<T> orbit_hi;
-        build_ref_orbit<T, F>(anchor.x, anchor.y, iter_lim, orbit_hi);
-        downcast_orbit<T, T_lo, F>(orbit_hi, orbit_lo);
-    }
-
-    // 2) quickly calclate pixels using reference
+    // quickly calclate pixels using reference
     int compute_tiles;
     switch (field->compute_phase)
     {
-    case 0: compute_tiles = (threads * m1);
-    case 1: compute_tiles = (threads * m2);
-    case 2: compute_tiles = (threads * m3);
-    default: compute_tiles = threads;
+    case 0: compute_tiles = (threads * m1); break;
+    case 1: compute_tiles = (threads * m2); break;
+    case 2: compute_tiles = (threads * m3); break;
+    default: compute_tiles = threads; break;
     }
 
     f32 tiles_sqrt = ceil(sqrt((f32)compute_tiles));
     int tile_w = (int)ceil((f32)bmp->width() / tiles_sqrt);
     int tile_h = (int)ceil((f32)bmp->height() / tiles_sqrt);
+    bool frame_complete = false;
 
-    bool frame_complete = bmp->forEachWorldTilePixel<T>(tile_w, tile_h, current_tile, [&](int x, int y, T wx, T wy)
+    if constexpr (perturbation)
     {
-        EscapeFieldPixel& field_pixel = field->at(x, y);
+        // get high precision anchor world pos
+        RefOrbitLo<T_lo> orbit_lo;
+        Vec2<T> anchor;        bmp->worldPos<T>(bmp->width()/2, bmp->height()/2, anchor.x, anchor.y);
 
-        f64 depth = field_pixel.depth;
-        if (depth >= 0) return;
-
-        const T_lo dcx_lo = (T_lo)(wx - anchor.x);
-        const T_lo dcy_lo = (T_lo)(wy - anchor.y);
-
-        f64 dist{};
-        f32 stripe{};
-        mandel_kernel_approx_rebase<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
-
-        field_pixel.depth = depth;
-        field_pixel.dist = dist;
-        field_pixel.stripe = stripe;
-
-    }, compute_tiles, timeout);
-
-    norm_field.forEach([&](NormalizationPixel& field_pixel)
-    {
-        if (field_pixel.is_final)
-            return;
-
-        const T_lo dcx_lo = (T_lo)(field_pixel.world_pos.x - anchor.x);
-        const T_lo dcy_lo = (T_lo)(field_pixel.world_pos.y - anchor.y);
-
-        // faster version of: bmp->pixelPosFromWorld(field_pixel.world_pos);
-        IVec2 p = field_pixel.stage_pos / phaseBmpScale(field->compute_phase);
-        EscapeFieldPixel* existing_pixel = field->get(p.x, p.y);
-
-        if (existing_pixel)
+        // calculate reference orbit in high precision, downcast to low
         {
-            // always update normalization pixel to nearest pixel (if available),
-            // as the previous phase may lack accuracy due to grid snapping
-            field_pixel.depth = existing_pixel->depth;
-            field_pixel.dist = existing_pixel->dist;
-            field_pixel.stripe = existing_pixel->stripe;
-            return;
+            RefOrbit<T> orbit_hi;
+            build_ref_orbit<T, F>(anchor.x, anchor.y, iter_lim, orbit_hi);
+            downcast_orbit<T, T_lo, F>(orbit_hi, orbit_lo);
         }
 
-        // coordinate lies outside of viwport rect, do calculation
-        f64 depth;
-        f64 dist;
-        f32 stripe;
-        mandel_kernel_approx_rebase<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+        // run perturbation kernel on bmp pixels
+        frame_complete = bmp->forEachWorldTilePixel<T>(tile_w, tile_h, P, [&](int x, int y, T wx, T wy)
+        {
+            EscapeFieldPixel& field_pixel = field->at(x, y);
 
-        field_pixel.depth = depth;
-        field_pixel.dist = dist;
-        field_pixel.stripe = stripe;
+            f64 depth = field_pixel.depth;
+            if (depth >= 0) return;
+            
+            const T_lo dcx_lo = (T_lo)(wx - anchor.x);
+            const T_lo dcy_lo = (T_lo)(wy - anchor.y);
 
-        // don't recalculate
-        field_pixel.is_final = true;
-    }, threads);
+            f64 dist; f32 stripe{};
+            mandel_kernel_approx_rebase<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+            field_pixel.set(depth, dist, stripe);
+
+        }, compute_tiles, timeout);
+
+        // run perturbation kernel on normalization points (using existing results first if they exist)
+        norm_field.forEach([&](NormalizationPixel& field_pixel)
+        {
+            // already calculated on previous frame? skip
+            if (field_pixel.is_final) return; 
+
+            IVec2 p = field_pixel.stage_pos / phaseBmpScale(field->compute_phase);
+            EscapeFieldPixel* existing_pixel = field->get(p.x, p.y);
+
+            if (existing_pixel) {
+                field_pixel.set(*existing_pixel);
+                return;
+            }
+            
+            // coordinate lies outside of viwport rect, do calculation
+            const Vec2<T> world_pos = field_pixel.worldPos<T>();
+            const T_lo dcx_lo = (T_lo)(world_pos.x - anchor.x);
+            const T_lo dcy_lo = (T_lo)(world_pos.y - anchor.y);
+            f64 depth, dist; f32 stripe;
+            mandel_kernel_approx_rebase<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+
+            field_pixel.set(depth, dist, stripe);
+
+            // don't recalculate
+            field_pixel.is_final = true;
+        });
+    }
+    else
+    {
+        frame_complete = bmp->forEachWorldTilePixel<T>(tile_w, tile_h, P, [&](int x, int y, T wx, T wy)
+        {
+            EscapeFieldPixel& field_pixel = field->at(x, y);
+
+            f64 depth = field_pixel.depth;
+            if (depth >= 0) return;
+
+            f64 dist; f32 stripe;
+            mandel_kernel<T, F>(wx, wy, iter_lim, depth, dist, stripe, stripe_params);
+            field_pixel.set(depth, dist, stripe);
+
+        }, compute_tiles, timeout);
+
+        norm_field.forEach([&](NormalizationPixel& field_pixel)
+        {
+            // already calculated on previous frame? skip
+            if (field_pixel.is_final) return;
+
+            IVec2 p = field_pixel.stage_pos / phaseBmpScale(field->compute_phase);
+            EscapeFieldPixel* existing_pixel = field->get(p.x, p.y);
+
+            if (existing_pixel) {
+                field_pixel.set(*existing_pixel);
+                return;
+            }
+
+            // coordinate lies outside of viwport rect, do calculation
+            f64 depth, dist; f32 stripe;
+            const Vec2<T> world_pos = field_pixel.worldPos<T>();
+            mandel_kernel<T, F>(world_pos.x, world_pos.y, iter_lim, depth, dist, stripe, stripe_params);
+            field_pixel.set(depth, dist, stripe);
+
+            // don't recalculate
+            field_pixel.is_final = true;
+        });
+    }
 
     return frame_complete;
 };
@@ -625,8 +681,7 @@ void calculate_normalize_info(
     NormalizationField& norm_field,
     CameraInfo& camera,
     const IterParams& iter_params,
-    const DistParams& dist_params,
-    int threads
+    const DistParams& dist_params
 )
 {
     blPrint() << "calculate_normalize_info()";
@@ -651,7 +706,7 @@ void calculate_normalize_info(
         std::array<u64, BINS> hist; 
     };
 
-    std::vector<WeightHist> buckets(threads);
+    std::vector<WeightHist> buckets(Thread::threadCount());
 
     Thread::forEachBatch(norm_field.world_field, [&](std::span<NormalizationPixel> batch, int ti)
     {
@@ -676,7 +731,7 @@ void calculate_normalize_info(
                 total_w     += w; // add weight to sum
             }
         }
-    }, threads);
+    });
 
     std::array<u64, BINS> hist_w{};
     u64 total_w = 0;
@@ -688,6 +743,7 @@ void calculate_normalize_info(
 
         total_w += total;
     }
+    
 
     /*norm_field.forEach([&](NormalizationPixel& field_pixel)
     {
@@ -759,8 +815,8 @@ void calculate_normalize_info(
     // Calculate normalized depth/dist
     f64 sharpness_ratio = ((100.0 - dist_params.cycle_dist_sharpness) / 100.0 + 0.00001);
 
-    f128 r1 = f128(0.0001) / camera.relativeZoom<f128>();
-    f128 r2 = f128(5.0) / camera.relativeZoom<f128>();
+    f128 r1 = f128(0.1) / camera.relativeZoom<f128>();
+    f128 r2 = f128(10.0) / camera.relativeZoom<f128>();
 
     f128 stable_min_raw_dist = r1 * sharpness_ratio;
     f128 stable_max_raw_dist = r2;
@@ -791,8 +847,7 @@ void normalize_field(
     EscapeField* field,
     CanvasImage128* bmp,
     const IterParams& iter_params,
-    const DistParams& dist_params,
-    int threads)
+    const DistParams& dist_params)
 {
     f64 stable_min_dist = (f64)field->stable_min_dist;
     f64 stable_max_dist = (f64)field->stable_max_dist;
@@ -839,7 +894,7 @@ void normalize_field(
         field_pixel.final_depth  = final_depth;
         field_pixel.final_dist   = final_dist;
         field_pixel.final_stripe = final_stripe;
-    }, threads);
+    });
 }
 
 
@@ -850,8 +905,7 @@ void shadeBitmap(
     ImGradient* gradient,
     f32 iter_weight,
     f32 dist_weight,
-    f32 stripe_weight,
-    int threads
+    f32 stripe_weight
 )
 {
     f64 iter_ratio, dist_ratio, stripe_ratio;
@@ -889,46 +943,35 @@ void shadeBitmap(
         f32 dist_v = field_pixel.final_dist / max_final_dist; // cycle_dist_value;
         f32 stripe_v = field_pixel.final_stripe;
 
+        f32 w_iter_v   = (iter_v   * (f32)iter_ratio);
+        f32 w_dist_v   = (dist_v   * (f32)dist_ratio);
+        f32 w_stripe_v = (stripe_v * (f32)stripe_ratio);
+
         f32 combined_t;
 
         if constexpr (F == MandelShaderFormula::ITER_DIST_STRIPE)
         {
-            combined_t = Math::wrap(
-                ((iter_v * (f32)iter_ratio) +
-                (dist_v * (f32)dist_ratio)) +
-                (stripe_v * (f32)stripe_ratio),
-                0.0f, 1.0f
-            );
+            combined_t = Math::wrap01(w_iter_v + w_dist_v + w_stripe_v);
         }
         else if constexpr (F == MandelShaderFormula::ITER_DIST__MUL__STRIPE)
         {
-            combined_t = Math::wrap(
-                ((iter_v * (f32)iter_ratio) + (dist_v * (f32)dist_ratio)) *
-                (stripe_v * (f32)stripe_ratio),
-                0.0f, 1.0f
-            );
+            combined_t = Math::wrap01((w_iter_v + w_dist_v) * w_stripe_v);
         }
         else if constexpr (F == MandelShaderFormula::ITER__MUL__DIST_STRIPE)
         {
-            combined_t = Math::wrap(
-                (iter_v * (f32)iter_ratio) *
-                ((dist_v * (f32)dist_ratio) * (stripe_v * (f32)stripe_ratio)),
-                0.0f, 1.0f
-            );
+            combined_t = Math::wrap01(w_iter_v * (w_dist_v + w_stripe_v));
         }
         else if constexpr (F == MandelShaderFormula::ITER_STRIPE__MULT__DIST)
         {
-            combined_t = Math::wrap(
-                (stripe_v * (f32)stripe_ratio) *
-                ((iter_v * (f32)iter_ratio) * (stripe_v * (f32)stripe_ratio)),
-                0.0f, 1.0f
-            );
+            combined_t = Math::wrap01((w_iter_v + w_stripe_v) * w_dist_v);
         }
 
-        gradient->unguardedRGBA(combined_t, u32);
-
-        bmp->setPixel(x, y, u32);
-    }, threads);
+        if (isfinite(combined_t))
+        {
+            gradient->unguardedRGBA(combined_t, u32);
+            bmp->setPixel(x, y, u32);
+        }
+    });
 }
 
 SIM_END;

@@ -13,8 +13,17 @@ enum class MandelKernelFeatures
     MIX_ALL = 7,
     COUNT
 };
+
+enum struct MandelKernelMode : int
+{
+    AUTO = 0,
+    FULL = 1,
+    PERTURBATION = 2
+};
+
 // todo: find way to put inside SIM_BEG ns (wasm32 error, must be in global)
 bl_enable_enum_bitops(MandelKernelFeatures);
+bl_enable_enum_bitops(MandelKernelMode);
 
 SIM_BEG;
 
@@ -114,6 +123,19 @@ struct EscapeFieldPixel
     f32 final_dist;
     f32 final_stripe;
 
+    void set(const EscapeFieldPixel& p)
+    {
+        depth = p.depth;
+        dist = p.dist;
+        stripe = p.stripe;
+    }
+
+    void set(f64 _depth, f64 _dist, f32 _stripe) {
+        depth  = _depth;
+        dist   = _dist;
+        stripe = _stripe;
+    }
+
     //bool flag_for_skip;
 };
 
@@ -127,7 +149,6 @@ constexpr int phaseBmpScale(int phase)
 struct EscapeField : public std::vector<EscapeFieldPixel>
 {
     int compute_phase;
-    MandelKernelFeatures mandel_features = MandelKernelFeatures::ITER;
 
     f64 min_depth = 0.0;
     f64 max_depth = 0.0; // unused?
@@ -149,18 +170,10 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
 
     EscapeField(int phase) : compute_phase(phase) {}
 
-    void setAllDepth(f64 value)
+    void reset()
     {
-        for (int i = 0; i < size(); i++)
-        {
-            EscapeFieldPixel &p = std::vector<EscapeFieldPixel>::at(i);
-            p.depth = value;
-            p.dist = value;
-            p.stripe = (f32)value;
-            //p.dist_128 = { value, 0 };
-            //p.stripe_128 = { value, 0 };
-            skip_flags[i] = 0;
-        }
+        memset(data(), 0x80, size() * sizeof(EscapeFieldPixel)); // pattern gives each float type a negative value
+        memset(skip_flags.data(), 0, skip_flags.size() * sizeof(i8));
     }
     void setDimensions(int _w, int _h)
     {
@@ -207,7 +220,7 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
         return true;
     }
 
-    bool has_data(int x, int y)
+    bool has_valid_depth(int x, int y)
     {
         if (safe(x, y))
         {
@@ -221,78 +234,169 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
     {
         if (w <= 0 || h <= 0 || r <= 0) return;
 
-        auto idx = [this](int x, int y) { return y * w + x; };
+        const int W = w;
+        const int H = h;
+        const size_t N = size_t(W) * size_t(H);
 
-        // Snapshot current flags
-        std::vector<uint8_t> in(size_t(w) * size_t(h), 0);
-        for (int y = 0; y < h; ++y)
-            for (int x = 0; x < w; ++x)
-                in[idx(x, y)] = get_skip_flag(x, y) ? 1 : 0;
+        // Binary mask from skip_flags (0 or 1)
+        std::vector<uint8_t> mask(N);
+        for (size_t i = 0; i < N; ++i)
+            mask[i] = skip_flags[i] ? 1u : 0u;
 
-        // Erode
-        std::vector<uint8_t> out(size_t(w) * size_t(h), 0);
-        for (int y = 0; y < h; ++y)
+        // Summed-area table (integral image) for fast rectangular window sums.
+        // Size is (H+1) x (W+1)
+        const int PSW = W + 1;
+        const int PSH = H + 1;
+        std::vector<uint32_t> ps(size_t(PSW) * PSH, 0u);
+
+        for (int y = 0; y < H; ++y)
         {
-            for (int x = 0; x < w; ++x)
-            {
-                size_t i = idx(x, y);
-                if (!in[i]) { out[i] = 0; continue; }
+            uint32_t rowSum = 0;
+            const size_t rowOffset = size_t(y) * W;
+            const size_t psRow = size_t(y + 1) * PSW;
+            const size_t psPrevRow = size_t(y) * PSW;
 
-                bool inner = true;
-                for (int dy = -r; dy <= r && inner; ++dy)
-                    for (int dx = -r; dx <= r; ++dx)
-                    {
-                        if (dx == 0 && dy == 0) continue;
-                        int nx = x + dx, ny = y + dy;
-                        if (!safe(nx, ny) || !in[idx(nx, ny)]) { inner = false; break; }
-                    }
-                
-                out[i] = inner ? 1 : 0;
+            for (int x = 0; x < W; ++x)
+            {
+                rowSum += mask[rowOffset + x];
+                ps[psRow + (x + 1)] = ps[psPrevRow + (x + 1)] + rowSum;
             }
         }
 
-        // Write back
-        for (int y = 0; y < h; ++y)
-            for (int x = 0; x < w; ++x)
-                set_skip_flag(x, y, out[idx(x, y)] != 0);
+        const int windowSize = (2 * r + 1) * (2 * r + 1);
+
+        for (int y = 0; y < H; ++y)
+        {
+            for (int x = 0; x < W; ++x)
+            {
+                const size_t idx = size_t(y) * W + x;
+
+                // If original was 0, erosion must also be 0.
+                if (!mask[idx])
+                {
+                    skip_flags[idx] = 0;
+                    continue;
+                }
+
+                // IMPORTANT: your original code treated any pixel whose neighborhood
+                // extends out of bounds as NOT "inner" (because safe(nx,ny) == false).
+                // That means everything within 'r' pixels of the border is always 0.
+                if (x < r || x >= W - r || y < r || y >= H - r)
+                {
+                    skip_flags[idx] = 0;
+                    continue;
+                }
+
+                const int x0 = x - r;
+                const int y0 = y - r;
+                const int x1 = x + r;
+                const int y1 = y + r;
+
+                // Rectangle sum via integral image:
+                // sum = ps(y1+1,x1+1) - ps(y0,x1+1) - ps(y1+1,x0) + ps(y0,x0)
+                const uint32_t sum =
+                    ps[(y1 + 1) * PSW + (x1 + 1)] -
+                    ps[(y0)*PSW + (x1 + 1)] -
+                    ps[(y1 + 1) * PSW + (x0)] +
+                    ps[(y0)*PSW + (x0)];
+
+                // All neighbors 1? If not, clear.
+                skip_flags[idx] = (sum == uint32_t(windowSize)) ? 1 : 0;
+            }
+        }
     }
+
 
     void expandSkipFlags(int r = 1, bool overwrite = false)
     {
         if (w <= 0 || h <= 0) return;
-        const int W = w, H = h;
+
+        const int W = w;
+        const int H = h;
         const size_t N = size_t(W) * size_t(H);
 
-        // read current mask
-        std::vector<uint8_t> mask(N, 0);
-        for (int y = 0; y < H; ++y)
-            for (int x = 0; x < W; ++x)
-                mask[y * W + x] = get_skip_flag(x, y) ? 1 : 0;
+        // r <= 0 is a corner case; preserve original behavior:
+        // - The original would produce ring == 0 everywhere.
+        //   * overwrite=false -> skip_flags unchanged.
+        //   * overwrite=true  -> skip_flags cleared.
+        if (r <= 0)
+        {
+            if (overwrite)
+                std::fill(skip_flags.begin(), skip_flags.end(), 0);
+            return;
+        }
 
-        // dilate
-        std::vector<uint8_t> dil(N, 0);
-        for (int y = 0; y < H; ++y)
-            for (int x = 0; x < W; ++x)
-                dil[y * W + x] = dilate_at(mask, W, H, x, y, r);
-
-        // outline = dilated AND NOT mask
-        std::vector<uint8_t> ring(N, 0);
+        // Read current mask from skip_flags
+        std::vector<uint8_t> mask(N);
         for (size_t i = 0; i < N; ++i)
-            ring[i] = (dil[i] & (mask[i] ^ 1)); // 1 where new perimeter appears
+            mask[i] = skip_flags[i] ? 1u : 0u;
 
-        // write back
+        // Precompute disk offsets (dx,dy) with dx*dx + dy*dy <= r*r.
+        // Cached per thread to avoid recomputation on repeated calls.
+        struct Offset { int dx, dy; };
+        static thread_local std::vector<Offset> s_offsets;
+        static thread_local int s_cached_r = -1;
+
+        if (s_cached_r != r)
+        {
+            s_cached_r = r;
+            s_offsets.clear();
+            const int r2 = r * r;
+            for (int dy = -r; dy <= r; ++dy)
+            {
+                for (int dx = -r; dx <= r; ++dx)
+                {
+                    if (dx * dx + dy * dy <= r2)
+                        s_offsets.push_back({ dx, dy });
+                }
+            }
+        }
+
+        // ring will hold the dilated mask first, then we subtract the original mask
+        std::vector<uint8_t> ring(N, 0u);
+
+        // Dilation: for every "1" pixel, turn on all pixels in its disk neighborhood.
+        // This is equivalent to your previous per-output-pixel dilate_at loop,
+        // but only touches neighborhoods of existing 1s.
         for (int y = 0; y < H; ++y)
         {
-            for (int x = 0; x < W; ++x) 
+            const size_t rowOffset = size_t(y) * W;
+            for (int x = 0; x < W; ++x)
             {
-                bool v = ring[y * W + x];
-                if (overwrite)
-                    set_skip_flag(x, y, v);
-                else
-                    set_skip_flag(x, y, get_skip_flag(x, y) || v);
+                if (!mask[rowOffset + x]) continue;
+
+                for (const auto& o : s_offsets)
+                {
+                    const int xx = x + o.dx;
+                    const int yy = y + o.dy;
+                    if ((unsigned)xx >= (unsigned)W || (unsigned)yy >= (unsigned)H)
+                        continue;
+
+                    ring[size_t(yy) * W + xx] = 1u;
+                }
+            }
+        }
+
+        // "Outline = dilated AND NOT mask" – keep only newly added perimeter.
+        for (size_t i = 0; i < N; ++i)
+            ring[i] = (ring[i] & (mask[i] ^ 1u));
+
+        // Write back
+        if (overwrite)
+        {
+            for (size_t i = 0; i < N; ++i)
+                skip_flags[i] = ring[i] ? 1 : 0;
+        }
+        else
+        {
+            for (size_t i = 0; i < N; ++i)
+            {
+                if (ring[i])
+                    skip_flags[i] = 1;
             }
         }
     }
+
 
 private:
 
@@ -317,10 +421,39 @@ private:
 
 struct NormalizationPixel : public EscapeFieldPixel
 {
+private:
+    union {
+        FVec2  world_pos_32;
+        DVec2  world_pos_64;
+        DDVec2 world_pos_128;
+    };
+public:
+
+    NormalizationPixel() noexcept
+        : EscapeFieldPixel{}
+        , world_pos_128{}
+        , stage_pos{}
+        , is_final(false)
+        , weight(0.0f)
+    {
+    }
+
     DVec2  stage_pos;
-    DDVec2 world_pos;
     bool   is_final;
     float  weight;
+
+    template<typename T> requires is_f32<T>
+    [[nodiscard]] constexpr const FVec2& worldPos() { return world_pos_32; }
+
+    template<typename T> requires is_f64<T>
+    [[nodiscard]] constexpr const DVec2& worldPos() { return world_pos_64; }
+
+    template<typename T> requires is_f128<T>
+    [[nodiscard]] constexpr const DDVec2& worldPos() { return world_pos_128; }
+
+    void setWorldPos(FVec2 p)  { world_pos_32 = p; }
+    void setWorldPos(DVec2 p)  { world_pos_64 = p; }
+    void setWorldPos(DDVec2 p) { world_pos_128 = p; }
 };
 
 class NormalizationField
@@ -343,14 +476,16 @@ public:
         world_field.resize(local_field.size());
     }
 
+    template<typename T>
     void updateField(const CameraInfo &camera, double scale)
     {
-        f128   world_radius = (scale / camera.relativeZoom<f128>()) * 2.0;
-        DDVec2 cam_center_world = camera.pos<f128>();
+        T world_radius = ((T)scale / camera.relativeZoom<T>()) * T{ 2 };
+        Vec2<T> cam_center_world = camera.pos<T>();
 
         // Get stage quad of world ellipse bounds for fast stage interpolation
+        CanvasObjectBase<T> bounds;
         bounds.setCamera(camera);
-        bounds.setWorldRect(cam_center_world - world_radius, world_radius * 2.0);
+        bounds.setWorldRect(cam_center_world - world_radius, world_radius * 2);
         DQuad stage_quad = bounds.stageQuad();
 
         for (size_t i=0; i< world_field.size(); i++)
@@ -358,10 +493,11 @@ public:
             NormalizationPixel& px = world_field[i];
             const DVec2 pt = local_field[i];
 
-            px.world_pos = cam_center_world + (pt * world_radius);
+            //px.world_pos = cam_center_world + (pt * world_radius);
+            px.setWorldPos(cam_center_world + (pt * world_radius));
             px.stage_pos = stage_quad.lerpPoint(0.5 + pt * 0.5);
 
-            px.weight = 1.0f - (float)pt.magnitude();
+            px.weight = 1.0f - (float)pt.mag();
         }
     }
 
@@ -372,7 +508,7 @@ public:
     }
 
     template<typename Callback>
-    void forEach(Callback&& callback, int thread_count = Thread::idealThreadCount())
+    void forEach(Callback&& callback, int thread_count = Thread::threadCount())
     {
         //static_assert(std::is_invocable_r_v<void, Callback, NormalizationPixel&>,
         //    "Callback must be: void(NormalizationPixel&)");

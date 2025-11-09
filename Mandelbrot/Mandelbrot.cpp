@@ -15,6 +15,8 @@ void Mandelbrot_Project::projectPrepare(Layout& layout)
 
 void Mandelbrot_Scene::sceneStart()
 {
+    Thread::setMaxThreads(MAX_THREADS);
+
     // todo: Stop this getting called twice on startup
     generateGradientFromPreset(gradient, GradientPreset::CLASSIC);
 
@@ -38,7 +40,6 @@ void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
     navigator.setTarget(camera);
     navigator.setDirectCameraPanning(true);
     //camera->restrictRelativeZoomRange(0.5, 1e+300);
-
 
     #ifdef __EMSCRIPTEN__
     // If URL has encoded state data, load on startup
@@ -69,11 +70,12 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     updateEnabledKernelFeatures();
     updateActivePhaseAndField();
 
-    // ────── resume unfinished compute ──────
+    // ────── compute ──────
     bool finished_compute = false;
-    bool active_missing_features = (pending_field->mandel_features != mandel_features);
-    if (!final_frame_complete || active_missing_features)
+    if (!final_frame_complete)
+    {
         finished_compute = processCompute();
+    }
 
     // ────── color cycle changed? ──────
     bool gradient_changed = updateGradient();
@@ -88,10 +90,10 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     {
         FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
 
-        table_invoke(build_table(calculate_normalize_info, [&], active_field, norm_field, camera, iter_params, dist_params, numThreads()),
+        table_invoke(build_table(calculate_normalize_info, [&], active_field, norm_field, camera, iter_params, dist_params),
             float_type);
 
-        table_invoke(build_table(normalize_field, [&], active_field, active_bmp, iter_params, dist_params, numThreads()),
+        table_invoke(build_table(normalize_field, [&], active_field, active_bmp, iter_params, dist_params),
             float_type, mandel_features, iter_params.cycle_iter_normalize_depth);
     }
 
@@ -99,7 +101,7 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     if (reshade)
     {
         table_invoke(
-            build_table(shadeBitmap, [&], active_field, active_bmp, &gradient_shifted, (float)iter_weight, (float)dist_weight, (float)stripe_weight, numThreads()),
+            build_table(shadeBitmap, [&], active_field, active_bmp, &gradient_shifted, (float)iter_weight, (float)dist_weight, (float)stripe_weight),
             (MandelShaderFormula)shade_formula, maxdepth_show_optimized
         );
     }
@@ -222,6 +224,7 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
     }
     #endif
 
+    ///navigator.debugPrint(ctx);
 
     /*ctx->print() << "\ntween_frames_elapsed: " << tween_frames_elapsed << "\n";
     ctx->print() << "tween_expected_frames: " << tween_expected_frames << "\n";

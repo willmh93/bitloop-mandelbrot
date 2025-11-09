@@ -10,6 +10,7 @@ enum struct GradientPreset
     WAVES,
     PHOTON,
     CLOUDS,
+    RGB_BANDS,
     ///////////
     COUNT
 };
@@ -19,7 +20,8 @@ static const char* ColorGradientNames[(int)GradientPreset::COUNT] = {
     "RAINBOW",
     "WAVES",
     "REFRACTION",
-    "CLOUDS"
+    "CLOUDS",
+    "RGB_BANDS"
 };
 
 
@@ -49,7 +51,7 @@ inline void transformGradient(ImGradient& dest, ImGradient& src, float gradient_
     for (size_t i = 0; i < marks.size(); i++)
     {
         auto adjusted = Color(marks[i].color).adjustHue((float)hue_shift).vec4();
-        memcpy(shifted_marks[i].color, adjusted.asArray(), sizeof(float) * 4);
+        memcpy(shifted_marks[i].color, adjusted.data(), sizeof(float) * 4);
         shifted_marks[i].position = Math::wrap(marks[i].position + (float)gradient_shift, 0.0f, 1.0f);
     }
     dest.refreshCache();
@@ -113,6 +115,22 @@ inline void generateGradientFromPreset(
         grad.addMark(0.40f, ImColor(0, 176, 255));
         grad.addMark(0.60f, ImColor(255, 255, 255));
         grad.addMark(0.80f, ImColor(255, 255, 255));
+    }
+    break;
+
+    case GradientPreset::RGB_BANDS:
+    {
+        grad.addMark(0.06f, ImColor(0, 0, 0));
+        grad.addMark(0.16f, ImColor(0, 255, 252));
+        grad.addMark(0.27f, ImColor(0, 0, 0));
+		
+        grad.addMark(0.40f, ImColor(0, 0, 0));
+        grad.addMark(0.50f, ImColor(255, 0, 0));
+        grad.addMark(0.61f, ImColor(0, 0, 0));
+		
+        grad.addMark(0.73f, ImColor(0, 0, 0));
+        grad.addMark(0.84f, ImColor(3, 255, 0));
+        grad.addMark(0.94f, ImColor(0, 0, 0));
     }
     break;
 

@@ -14,23 +14,15 @@ file(GLOB SIM_SOURCES CONFIGURE_DEPENDS
 
 bitloop_new_project(Mandelbrot  ${SIM_SOURCES})
 
-# MSVC
+# fast math
 if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
 	if (MSVC)
 		target_compile_options(Mandelbrot PRIVATE /arch:AVX2 /fp:fast)
-	else()
-		# GCC/Clang
+	else() # GCC/Clang
 		target_compile_options(Mandelbrot PRIVATE -mavx2 -mfma -ffp-contract=fast -ffast-math -fno-math-errno)
 	endif()
 else()
-	target_compile_options(Mandelbrot PRIVATE
-		-O3 -flto
-		-msimd128
-		-mrelaxed-simd
-		-ffast-math
-		-ffp-contract=fast
-		-fno-math-errno
-	)
+	target_compile_options(Mandelbrot PRIVATE -O3 -flto -msimd128 -mrelaxed-simd -ffast-math -ffp-contract=fast -fno-math-errno)
 endif()
 
 
