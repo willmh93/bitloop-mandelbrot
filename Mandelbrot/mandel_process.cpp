@@ -217,6 +217,7 @@ bool Mandelbrot_Scene::processCompute()
         switch (float_type) {
             case FloatingPointType::F64:  timeout = 128; break;
             case FloatingPointType::F128: timeout = 256; break;
+            default: timeout = 0;
         }
     }
 
