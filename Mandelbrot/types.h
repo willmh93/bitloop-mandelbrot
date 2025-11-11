@@ -6,19 +6,24 @@
 
 enum class MandelKernelFeatures
 {
-    NONE = 0,
-    ITER = 1,
-    DIST = 2,
-    STRIPES = 4,
-    MIX_ALL = 7,
+    NONE    = 0b000,
+    ITER    = 0b001,
+    DIST    = 0b010,
+    STRIPES = 0b100,
+    MIX_ALL = 0b111,
+
     COUNT
 };
 
 enum struct MandelKernelMode : int
 {
-    AUTO = 0,
-    FULL = 1,
-    PERTURBATION = 2
+    NO_PERTURBATION            = 0,
+    PERTURBATION               = 1,
+    PERTURBATION_SIMD          = 2,
+    PERTURBATION_SIMD_UNROLLED = 3,
+
+    COUNT,
+    AUTO = COUNT, // Same value as COUNT to avoid being included in constexpr_dispatch 'build_table'
 };
 
 // todo: find way to put inside SIM_BEG ns (wasm32 error, must be in global)

@@ -145,13 +145,6 @@ void Mandelbrot_Scene::UI::overlay()
 
 void Mandelbrot_Scene::UI::populateSavingLoading()
 {
-    {
-        bl_scoped(m1, m2, m3);
-        ImGui::SliderInt("m1", &m1, 1, 64);
-        ImGui::SliderInt("m2", &m2, 1, 64);
-        ImGui::SliderInt("m3", &m3, 1, 256);
-    }
-
     if (ImGui::Section("Saving & Loading", true, 0))
     {
         if (ImGui::Button("Save"))
@@ -474,12 +467,17 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
         }
 
         ImGui::Checkbox("Highlight optimized regions", &maxdepth_show_optimized);
+        ImGui::Spacing(); ImGui::Spacing();
 
         bl_scoped(kernel_mode);
-        ImGui::Text("Kernel");
-        ImGui::RadioButton("Auto", &(int&)kernel_mode, (int)MandelKernelMode::AUTO);
-        ImGui::RadioButton("Full", &(int&)kernel_mode, (int)MandelKernelMode::FULL);
-        ImGui::RadioButton("Perturbation", &(int&)kernel_mode, (int)MandelKernelMode::PERTURBATION);
+        ImGui::Text("Kernel Mode");
+        ///--------------------------------------------------------------------------------------------------------------------------
+        ImGui::RadioButton("Auto",                          &(int&)kernel_mode, (int)MandelKernelMode::AUTO);
+        ImGui::RadioButton("No Perturbation",               &(int&)kernel_mode, (int)MandelKernelMode::NO_PERTURBATION);
+        ImGui::RadioButton("Perturbation (no SIMD)",        &(int&)kernel_mode, (int)MandelKernelMode::PERTURBATION);
+        ImGui::RadioButton("Perturbation (SIMD)",           &(int&)kernel_mode, (int)MandelKernelMode::PERTURBATION_SIMD);
+        ImGui::RadioButton("Perturbation (SIMD, unrolled)", &(int&)kernel_mode, (int)MandelKernelMode::PERTURBATION_SIMD_UNROLLED);
+        ///--------------------------------------------------------------------------------------------------------------------------
     }
 
     if (ImGui::Section("Normalization Sampling", false))

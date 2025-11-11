@@ -14,6 +14,11 @@ file(GLOB SIM_SOURCES CONFIGURE_DEPENDS
 
 bitloop_new_project(Mandelbrot  ${SIM_SOURCES})
 
+if (MSVC)
+  target_compile_options(Mandelbrot PRIVATE /bigobj)
+endif()
+
+
 # fast math
 if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
 	if (MSVC)
@@ -23,7 +28,14 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
 	endif()
 else()
 	target_compile_options(Mandelbrot PRIVATE -O3 -flto -msimd128 -mrelaxed-simd -ffast-math -ffp-contract=fast -fno-math-errno)
+	target_link_options(Mandelbrot PRIVATE
+	  -O3 -flto
+	  -sENVIRONMENT=web
+	)
 endif()
+
+#-sALLOW_MEMORY_GROWTH=1
+#-sINITIAL_MEMORY=268435456
 
 
 bitloop_add_dependency(Mandelbrot  "subprojects/Cardioid")

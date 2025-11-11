@@ -226,17 +226,21 @@ bool Mandelbrot_Scene::processCompute()
         //DQuad quad = ctx->worldQuad();
         //bool x_axis_visible = quad.intersects({ {quad.minX(), 0}, {quad.maxX(), 0} });
 
+        //if (kernel_mode == MandelKernelMode::AUTO)
+        //    kernel_mode = (float_type >= FloatingPointType::F128) ? 
+        //else if (kernel_mode == MandelKernelMode::FULL)
+        //    kernel_mode = false;
+        // 
         // Run appropriate kernel for given settings
-        bool use_perturbation = true;
+        MandelKernelMode deduced_kernel_mode = kernel_mode;
 
-        if (kernel_mode == MandelKernelMode::AUTO)
-            use_perturbation = (float_type >= FloatingPointType::F128);
-        else if (kernel_mode == MandelKernelMode::FULL)
-            use_perturbation = false;
+        // If 'AUTO', use perturbation at f128 depths, otherwise no performance gain
+        if (deduced_kernel_mode == MandelKernelMode::AUTO)
+            deduced_kernel_mode = (float_type >= FloatingPointType::F128) ? MandelKernelMode::PERTURBATION_SIMD_UNROLLED : MandelKernelMode::NO_PERTURBATION;
 
         finished_compute = frame_complete = table_invoke(
-            build_table(mandelbrot_perturbation, [&], pending_bmp, pending_field, norm_field, iter_lim, timeout, P, m1, m2, m3, stripe_params),
-            float_type, mandel_features, use_perturbation, flatten
+            build_table(mandelbrot_perturbation, [&], pending_bmp, pending_field, norm_field, iter_lim, timeout, P, stripe_params),
+            float_type, mandel_features, deduced_kernel_mode
         );
     }
     //else
@@ -365,7 +369,6 @@ bool Mandelbrot_Scene::mandelChanged()
     bool features_changed        = Changed(mandel_features);
     bool normalize_field_changed = Changed(normalize_field_quality) || Changed(normalize_field_exponent) || Changed(normalize_field_scale);
     bool kernel_mode_changed     = Changed(kernel_mode);
-    bool m_changed = Changed(m1, m2, m3);
     return (
         first_frame ||
         view_changed || 
@@ -375,8 +378,7 @@ bool Mandelbrot_Scene::mandelChanged()
         //flatten_changed || 
         features_changed || 
         normalize_field_changed ||
-        kernel_mode_changed ||
-        m_changed
+        kernel_mode_changed
     );
 }
 

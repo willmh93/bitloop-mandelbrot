@@ -37,7 +37,6 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 
     // ────── threads ──────
     static constexpr int MAX_THREADS = 0; // 0 = max threads
-    int m1 = 1, m2 = 1, m3 = 1;
 
     // ────── resources ──────
     NanoFont font;
@@ -210,6 +209,7 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 
     // ────── simulation processing ──────
     void sceneStart() override;
+    void sceneDestroy() override;
     void sceneMounted(Viewport* viewport) override;
 
     // ────── viewport handling ──────

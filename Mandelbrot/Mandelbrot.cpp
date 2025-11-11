@@ -25,8 +25,15 @@ void Mandelbrot_Scene::sceneStart()
     font = NanoFont::create("/data/fonts/DroidSans.ttf");
 }
 
+void Mandelbrot_Scene::sceneDestroy()
+{
+    blPrint() << "Mandelbrot_Scene::sceneDestroy()";
+}
+
 void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
 {
+    blPrint() << "Mandelbrot_Scene::sceneMounted()";
+
     //camera->setCameraStageSnappingSize(1);
     camera.setSurface(ctx);
     camera.setOriginViewportAnchor(Anchor::CENTER);

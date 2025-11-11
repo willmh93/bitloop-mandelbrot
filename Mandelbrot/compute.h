@@ -5,6 +5,13 @@
 #include <algorithm>
 
 
+#include <bitloop/util/simd.h>
+
+//#ifndef __EMSCRIPTEN__
+//#define use_simd
+//#endif
+//
+
 
 SIM_BEG;
 
@@ -178,8 +185,6 @@ FAST_INLINE void mandel_kernel(
     {
         if constexpr (NEED_DIST)
             mandel_step_derivative(z, dz);
-
-
 
         cplx<T> z0 = z;
 
@@ -371,6 +376,7 @@ inline void downcast_orbit(const RefOrbit<Thi>& hi, RefOrbitLo<T_lo>& lo)
     lo.max_ref = hi.max_ref;
 }
 
+// Perturbation (no SIMD)
 template<class T_lo, class T_hi, MandelKernelFeatures F>
 FAST_INLINE bool mandel_kernel_approx_rebase(
     const RefOrbitLo<T_lo>& ref,
@@ -381,11 +387,13 @@ FAST_INLINE bool mandel_kernel_approx_rebase(
     f32& stripe,
     StripeParams sp = {})
 {
+    using V2 = simd2::v2<T_lo>;
+
     constexpr bool NEED_DIST = (bool)(F & MandelKernelFeatures::DIST);
     constexpr bool NEED_STRIPES = (bool)(F & MandelKernelFeatures::STRIPES);
     constexpr T_lo  ER2 = T_lo(escape_radius<F>());
 
-    int ref_index = 0;
+    int ref_i = 0;
     const int max_ref = std::max(0, ref.max_ref);
 
     // --- delta state ---
@@ -407,17 +415,17 @@ FAST_INLINE bool mandel_kernel_approx_rebase(
     for (int n = 0; n < iter_lim; ++n)
     {
         // 1) update derivative
-        if constexpr (NEED_DIST) 
+        if constexpr (NEED_DIST)
         {
             const T_lo tdx = T_lo(2) * zx_prev * ddx - T_lo(2) * zy_prev * ddy + T_lo(1);
             const T_lo tdy = T_lo(2) * zx_prev * ddy + T_lo(2) * zy_prev * ddx;
-            ddx = tdx; 
+            ddx = tdx;
             ddy = tdy;
         }
 
         // 2) read reference z_pre and advance delta
-        const T_lo c2x = ref.pre2x[ref_index];
-        const T_lo c2y = ref.pre2y[ref_index];
+        const T_lo c2x = ref.pre2x[ref_i];
+        const T_lo c2y = ref.pre2y[ref_i];
 
         const T_lo sx = c2x + dx;
         const T_lo sy = c2y + dy;
@@ -431,8 +439,8 @@ FAST_INLINE bool mandel_kernel_approx_rebase(
         dy = dx_sy + dy_sx + dcy;
 
         // 3) build reference z_post (in T_lo)
-        const T_lo zpostx = ref.post_x[ref_index];
-        const T_lo zposty = ref.post_y[ref_index];
+        const T_lo zpostx = ref.post_x[ref_i];
+        const T_lo zposty = ref.post_y[ref_i];
 
         const T_lo zax = zpostx + dx; // z_{n+1}.x
         const T_lo zay = zposty + dy; // z_{n+1}.y
@@ -459,7 +467,7 @@ FAST_INLINE bool mandel_kernel_approx_rebase(
             depth = nu - mandelbrot_smoothing_offset<F>();
 
             // DIST
-            if constexpr (NEED_DIST) 
+            if constexpr (NEED_DIST)
             {
                 const T_lo r = T_lo(std::sqrt((f64)r2));
                 const T_lo dzabs = T_lo(std::hypot((f64)ddx, (f64)ddy));
@@ -470,7 +478,7 @@ FAST_INLINE bool mandel_kernel_approx_rebase(
             }
 
             // STRIPE
-            if constexpr (NEED_STRIPES) 
+            if constexpr (NEED_STRIPES)
             {
                 f32 avg = (sum_samples > 0) ? (sum / (f32)sum_samples) : 0.0f;
                 f32 prev = (sum_samples > 1) ? ((sum - last_added) / (f32)(sum_samples - 1)) : avg;
@@ -497,16 +505,16 @@ FAST_INLINE bool mandel_kernel_approx_rebase(
         bool must_rebase = false;
 
         // A) after using the last safe ref step, rebase before the next iteration
-        if (ref_index == max_ref)
+        if (ref_i == max_ref)
             must_rebase = true;
 
         // B) boundary-aware rebase: if |z| too large compared to the remaining bailout slack at this ref step, rebase
-        if (!must_rebase) 
+        if (!must_rebase)
         {
-             constexpr T_lo ALPHA2 = (T_lo)(0.75 * 0.75);
-             const T_lo lim2 = ALPHA2 * ref.slack2[ref_index];
-             if (lim2 > (T_lo)0 && d2 > lim2)
-                 must_rebase = true;
+            constexpr T_lo ALPHA2 = (T_lo)(0.75 * 0.75);
+            const T_lo lim2 = ALPHA2 * ref.slack2[ref_i];
+            if (lim2 > (T_lo)0 && d2 > lim2)
+                must_rebase = true;
         }
 
         // C) pauldelbrot rebase (near critical point)
@@ -516,23 +524,23 @@ FAST_INLINE bool mandel_kernel_approx_rebase(
                 must_rebase = true;
         }
 
-        if (must_rebase) 
+        if (must_rebase)
         {
             // re-center on the absolute state and restart the reference at m=0
-            dx = zax; 
-            dy = zay; 
+            dx = zax;
+            dy = zay;
 
-            ref_index = 0;
+            ref_i = 0;
 
             // keep dW/dc continuous across the split change
-            zx_prev = zax; 
+            zx_prev = zax;
             zy_prev = zay;
 
             continue;
         }
 
         // If no rebase, advance to the next reference step (no wrap-around)
-        ++ref_index;
+        ++ref_i;
 
         // 7) carry z_{n+1} to next step as z_n
         zx_prev = zax; zy_prev = zay;
@@ -540,13 +548,577 @@ FAST_INLINE bool mandel_kernel_approx_rebase(
 
     // Did not escape
     depth = INSIDE_MANDELBROT_SET;
-    if constexpr (NEED_DIST)    dist   = T_lo(-1);
+    if constexpr (NEED_DIST)    dist = T_lo(-1);
+    if constexpr (NEED_STRIPES) stripe = T_lo(0);
+    return true;
+}
+
+// Perturbation (SIMD)
+template<class T_lo, class T_hi, MandelKernelFeatures F>
+FAST_INLINE bool mandel_kernel_approx_rebase_simd(
+    const RefOrbitLo<T_lo>& ref,
+    T_lo dcx, T_lo dcy,
+    int iter_lim,
+    f64& depth,
+    f64& dist,
+    f32& stripe,
+    StripeParams sp = {})
+{
+    using V2 = simd2::v2<T_lo>;
+
+    constexpr bool NEED_DIST = (bool)(F & MandelKernelFeatures::DIST);
+    constexpr bool NEED_STRIPES = (bool)(F & MandelKernelFeatures::STRIPES);
+    constexpr T_lo ER2 = T_lo(escape_radius<F>());
+
+    int ref_i = 0;
+    const int max_ref = std::max(0, ref.max_ref);
+
+    // --- delta state ---
+    T_lo dx = 0, dy = 0;
+
+    // --- derivative (for distance estimate) ---
+    T_lo ddx = T_lo(1);
+    T_lo ddy = T_lo(0);
+
+    // --- z (previous step) ---
+    T_lo zx_prev = 0, zy_prev = 0;
+
+    // --- stripe accumulators ---
+    f32 sum = 0.0f, last_added = 0.0f;
+    int sum_samples = 0;
+    f32 freq = sp.freq;
+    f32 phase = sp.phase;
+
+    #if defined(__wasm_simd128__)
+    #pragma clang loop unroll_count(2)
+    #endif
+    for (int n = 0; n < iter_lim; ++n)
+    {
+        // 1) update derivative: t = 2*z_prev*dd + 1
+        if constexpr (NEED_DIST)
+        {
+            auto v_z = V2::set(zx_prev, zy_prev);
+            auto v_dd = V2::set(ddx, ddy);
+            auto v_twoz = V2::mul(V2::set(T_lo(2), T_lo(2)), v_z);
+            auto v_t = V2::add(V2::cmul(v_twoz, v_dd), V2::set(T_lo(1), T_lo(0)));
+            ddx = v_t.x();
+            ddy = v_t.y();
+        }
+
+
+        // 2) read reference z_pre and advance delta:
+        // delta' = delta * (pre2 + delta) + (dcx, dcy)
+        const T_lo c2x = ref.pre2x[ref_i];
+        const T_lo c2y = ref.pre2y[ref_i];
+
+        auto v_dx = V2::set(dx, dy);
+        auto v_s = V2::add(V2::set(c2x, c2y), v_dx);
+        v_dx = V2::add(V2::cmul(v_dx, v_s), V2::set(dcx, dcy));
+        dx = v_dx.x();
+        dy = v_dx.y();
+
+        // 3) build reference z_post (in T_lo), z_{n+1} = post + delta
+        const T_lo zpostx = ref.post_x[ref_i];
+        const T_lo zposty = ref.post_y[ref_i];
+
+        auto v_zn1 = V2::add(V2::set(zpostx, zposty), V2::set(dx, dy));
+        const T_lo zax = v_zn1.x();       // z_{n+1}.x
+        const T_lo zay = v_zn1.y();       // z_{n+1}.y
+
+        // 4) STRIPES sampling on z_{n+1}
+        if constexpr (NEED_STRIPES) {
+            f32 a = std::atan2f((f32)zay, (f32)zax);
+            f32 s = 0.5f + 0.5f * std::sin(freq * a + phase);
+            last_added = s;
+            sum += s;
+            ++sum_samples;
+        }
+
+        // 5) escape test
+        const T_lo r2 = V2::dot(v_zn1);
+        if (r2 > ER2)
+        {
+            // smooth ITER
+            const f64 r2d = (f64)r2;
+            const f64 log_abs_z = 0.5 * std::log(std::max(r2d, 1e-300));
+            const f64 nu = f64(n + 1) + 1.0 - std::log2(std::max(log_abs_z, 1e-300));
+            depth = nu - mandelbrot_smoothing_offset<F>();
+
+            // DIST
+            if constexpr (NEED_DIST) {
+                const T_lo r = T_lo(std::sqrt((f64)r2));
+                const T_lo dzabs = T_lo(std::hypot((f64)ddx, (f64)ddy));
+                dist = (dzabs == 0) ? 0 : (r * std::log(r) / dzabs);
+            }
+            else {
+                dist = 0;
+            }
+
+            // STRIPE
+            if constexpr (NEED_STRIPES) {
+                f32 avg = (sum_samples > 0) ? (sum / (f32)sum_samples) : 0.0f;
+                f32 prev = (sum_samples > 1) ? ((sum - last_added) / (f32)(sum_samples - 1)) : avg;
+
+                const f64 log_r2 = std::max((f64)std::log(r2), 1e-300);
+                f32 frac = 1.0f + (f32)std::log2((f64)log_escape_radius_squared<F>() / log_r2);
+                frac = clamp01(frac);
+
+                f32 mix = frac * avg + (1.0f - frac) * prev;
+                mix = 0.5f + 0.5f * std::tanhf(sp.contrast * (mix - 0.5f));
+                stripe = clamp01(mix);
+            }
+            else {
+                stripe = 0;
+            }
+
+            return true;
+        }
+
+        // 6) rebase checks (use SIMD-computed magnitudes)
+        const T_lo d2 = V2::dot(V2::set(dx, dy));
+        bool must_rebase = (ref_i == max_ref);
+
+        if (!must_rebase) {
+            constexpr T_lo ALPHA2 = (T_lo)(0.75 * 0.75);
+            const T_lo lim2 = ALPHA2 * ref.slack2[ref_i];
+            if (lim2 > (T_lo)0 && d2 > lim2) must_rebase = true;
+        }
+
+        if (!must_rebase) {
+            constexpr T_lo H = (T_lo)0.95;
+            if (r2 < H * d2) must_rebase = true;
+        }
+
+        if (must_rebase)
+        {
+            // re-center on the absolute state and restart the reference at m=0
+            dx = zax; dy = zay;
+            ref_i = 0;
+
+            // keep dW/dc continuous across the split change
+            zx_prev = zax; zy_prev = zay;
+            continue;
+        }
+
+        // advance to next reference step (no wrap)
+        ++ref_i;
+
+        // 7) carry z_{n+1} to next step as z_n
+        zx_prev = zax; zy_prev = zay;
+    }
+
+    // Did not escape
+    depth = INSIDE_MANDELBROT_SET;
+    if constexpr (NEED_DIST)    dist = T_lo(-1);
+    if constexpr (NEED_STRIPES) stripe = T_lo(0);
+    return true;
+}
+
+// Perturbation (SIMD, unrolled)
+template<class T_lo, class T_hi, MandelKernelFeatures F>
+FAST_INLINE bool mandel_kernel_approx_rebase_simd_unrolled(
+    const RefOrbitLo<T_lo>& ref,
+    T_lo dcx, T_lo dcy,
+    int iter_lim,
+    f64& depth,
+    f64& dist,
+    f32& stripe,
+    StripeParams sp = {})
+{
+    using V2 = simd2::v2<T_lo>;
+
+    constexpr bool NEED_DIST = (bool)(F & MandelKernelFeatures::DIST);
+    constexpr bool NEED_STRIPES = (bool)(F & MandelKernelFeatures::STRIPES);
+    constexpr T_lo ER2 = T_lo(escape_radius<F>());
+
+    int ref_i = 0;
+    const int max_ref = std::max(0, ref.max_ref);
+
+    // --- state ---
+    T_lo dx = 0, dy = 0;
+    T_lo ddx = T_lo(1), ddy = T_lo(0);
+    T_lo zx_prev = 0, zy_prev = 0;
+
+    // --- stripes ---
+    f32 sum = 0.0f, last_added = 0.0f;
+    int sum_samples = 0;
+    f32 freq = sp.freq, phase = sp.phase;
+
+    int n = 0;
+
+    #if defined(__clang__)
+    #pragma clang loop unroll(disable)
+    #endif
+
+    while (n < iter_lim)
+    {
+        // ---------------------- iteration n ----------------------
+        {
+            if constexpr (NEED_DIST)
+            {
+                auto v_z = V2::set(zx_prev, zy_prev);
+                auto v_dd = V2::set(ddx, ddy);
+                auto v_twoz = V2::mul(V2::set(T_lo(2), T_lo(2)), v_z);
+                auto v_t = V2::add(V2::cmul(v_twoz, v_dd), V2::set(T_lo(1), T_lo(0)));
+                ddx = v_t.x();
+                ddy = v_t.y();
+            }
+
+            const T_lo c2x = ref.pre2x[ref_i];
+            const T_lo c2y = ref.pre2y[ref_i];
+
+            auto v_dx = V2::set(dx, dy);
+            auto v_s = V2::add(V2::set(c2x, c2y), v_dx);
+            v_dx = V2::add(V2::cmul(v_dx, v_s), V2::set(dcx, dcy));
+            dx = v_dx.x();
+            dy = v_dx.y();
+
+            const T_lo zpostx = ref.post_x[ref_i];
+            const T_lo zposty = ref.post_y[ref_i];
+
+            auto v_zn1 = V2::add(V2::set(zpostx, zposty), V2::set(dx, dy));
+            const T_lo zax = v_zn1.x();
+            const T_lo zay = v_zn1.y();
+
+            if constexpr (NEED_STRIPES) {
+                f32 a = std::atan2f((f32)zay, (f32)zax);
+                f32 s = 0.5f + 0.5f * std::sin(freq * a + phase);
+                last_added = s;
+                sum += s;
+                ++sum_samples;
+            }
+
+            const T_lo r2 = V2::dot(v_zn1);
+            if (r2 > ER2)
+            {
+                const f64 r2d = (f64)r2;
+                const f64 log_abs_z = 0.5 * std::log(std::max(r2d, 1e-300));
+                const f64 nu = f64(n + 1) + 1.0 - std::log2(std::max(log_abs_z, 1e-300));
+                depth = nu - mandelbrot_smoothing_offset<F>();
+
+                if constexpr (NEED_DIST) {
+                    const T_lo r = T_lo(std::sqrt((f64)r2));
+                    const T_lo dzabs = T_lo(std::hypot((f64)ddx, (f64)ddy));
+                    dist = (dzabs == 0) ? 0 : (r * std::log(r) / dzabs);
+                }
+                else {
+                    dist = 0;
+                }
+
+                if constexpr (NEED_STRIPES) {
+                    f32 avg = (sum_samples > 0) ? (sum / (f32)sum_samples) : 0.0f;
+                    f32 prev = (sum_samples > 1) ? ((sum - last_added) / (f32)(sum_samples - 1)) : avg;
+
+                    const f64 log_r2 = std::max((f64)std::log(r2), 1e-300);
+                    f32 frac = 1.0f + (f32)std::log2((f64)log_escape_radius_squared<F>() / log_r2);
+                    frac = clamp01(frac);
+
+                    f32 mix = frac * avg + (1.0f - frac) * prev;
+                    mix = 0.5f + 0.5f * std::tanhf(sp.contrast * (mix - 0.5f));
+                    stripe = clamp01(mix);
+                }
+                else {
+                    stripe = 0;
+                }
+
+                return true;
+            }
+
+            const T_lo d2 = V2::dot(V2::set(dx, dy));
+            bool must_rebase = (ref_i == max_ref);
+
+            if (!must_rebase) {
+                constexpr T_lo ALPHA2 = (T_lo)(0.75 * 0.75);
+                const T_lo lim2 = ALPHA2 * ref.slack2[ref_i];
+                if (lim2 > (T_lo)0 && d2 > lim2) must_rebase = true;
+            }
+            if (!must_rebase) {
+                constexpr T_lo H = (T_lo)0.95;
+                if (r2 < H * d2) must_rebase = true;
+            }
+
+            if (must_rebase)
+            {
+                dx = zax; dy = zay;
+                ref_i = 0;
+                zx_prev = zax; zy_prev = zay;
+
+                ++n;           // exactly one iteration completed
+                continue;      // skip the unrolled second half, identical to original
+            }
+
+            ++ref_i;
+            zx_prev = zax; zy_prev = zay;
+            ++n;
+        }
+
+        if (n >= iter_lim)
+            break;
+
+        // -------------------- iteration n (second half) --------------------
+        {
+            if constexpr (NEED_DIST)
+            {
+                auto v_z = V2::set(zx_prev, zy_prev);
+                auto v_dd = V2::set(ddx, ddy);
+                auto v_twoz = V2::mul(V2::set(T_lo(2), T_lo(2)), v_z);
+                auto v_t = V2::add(V2::cmul(v_twoz, v_dd), V2::set(T_lo(1), T_lo(0)));
+                ddx = v_t.x();
+                ddy = v_t.y();
+            }
+
+            const T_lo c2x = ref.pre2x[ref_i];
+            const T_lo c2y = ref.pre2y[ref_i];
+
+            auto v_dx = V2::set(dx, dy);
+            auto v_s = V2::add(V2::set(c2x, c2y), v_dx);
+            v_dx = V2::add(V2::cmul(v_dx, v_s), V2::set(dcx, dcy));
+            dx = v_dx.x();
+            dy = v_dx.y();
+
+            const T_lo zpostx = ref.post_x[ref_i];
+            const T_lo zposty = ref.post_y[ref_i];
+
+            auto v_zn1 = V2::add(V2::set(zpostx, zposty), V2::set(dx, dy));
+            const T_lo zax = v_zn1.x();
+            const T_lo zay = v_zn1.y();
+
+            if constexpr (NEED_STRIPES) {
+                f32 a = std::atan2f((f32)zay, (f32)zax);
+                f32 s = 0.5f + 0.5f * std::sin(freq * a + phase);
+                last_added = s;
+                sum += s;
+                ++sum_samples;
+            }
+
+            const T_lo r2 = V2::dot(v_zn1);
+            if (r2 > ER2)
+            {
+                const f64 r2d = (f64)r2;
+                const f64 log_abs_z = 0.5 * std::log(std::max(r2d, 1e-300));
+                const f64 nu = f64(n + 1) + 1.0 - std::log2(std::max(log_abs_z, 1e-300));
+                depth = nu - mandelbrot_smoothing_offset<F>();
+
+                if constexpr (NEED_DIST) {
+                    const T_lo r = T_lo(std::sqrt((f64)r2));
+                    const T_lo dzabs = T_lo(std::hypot((f64)ddx, (f64)ddy));
+                    dist = (dzabs == 0) ? 0 : (r * std::log(r) / dzabs);
+                }
+                else {
+                    dist = 0;
+                }
+
+                if constexpr (NEED_STRIPES) {
+                    f32 avg = (sum_samples > 0) ? (sum / (f32)sum_samples) : 0.0f;
+                    f32 prev = (sum_samples > 1) ? ((sum - last_added) / (f32)(sum_samples - 1)) : avg;
+
+                    const f64 log_r2 = std::max((f64)std::log(r2), 1e-300);
+                    f32 frac = 1.0f + (f32)std::log2((f64)log_escape_radius_squared<F>() / log_r2);
+                    frac = clamp01(frac);
+
+                    f32 mix = frac * avg + (1.0f - frac) * prev;
+                    mix = 0.5f + 0.5f * std::tanhf(sp.contrast * (mix - 0.5f));
+                    stripe = clamp01(mix);
+                }
+                else {
+                    stripe = 0;
+                }
+
+                return true;
+            }
+
+            const T_lo d2 = V2::dot(V2::set(dx, dy));
+            bool must_rebase = (ref_i == max_ref);
+
+            if (!must_rebase) {
+                constexpr T_lo ALPHA2 = (T_lo)(0.75 * 0.75);
+                const T_lo lim2 = ALPHA2 * ref.slack2[ref_i];
+                if (lim2 > (T_lo)0 && d2 > lim2) must_rebase = true;
+            }
+            if (!must_rebase) {
+                constexpr T_lo H = (T_lo)0.95;
+                if (r2 < H * d2) must_rebase = true;
+            }
+
+            if (must_rebase)
+            {
+                dx = zax; dy = zay;
+                ref_i = 0;
+                zx_prev = zax; zy_prev = zay;
+
+                ++n;       // exactly one more iteration completed
+                continue;  // back to outer while
+            }
+
+            ++ref_i;
+            zx_prev = zax; zy_prev = zay;
+            ++n;
+        }
+    }
+
+    // Did not escape
+    depth = INSIDE_MANDELBROT_SET;
+    if constexpr (NEED_DIST)    dist = T_lo(-1);
     if constexpr (NEED_STRIPES) stripe = T_lo(0);
     return true;
 }
 
 
-template<typename T, MandelKernelFeatures F, bool perturbation, bool flatten>
+
+/// slower "optimized" version which avoided temporaries
+/*template<class T_lo, class T_hi, MandelKernelFeatures F>
+FAST_INLINE bool mandel_kernel_approx_rebase(
+    const RefOrbitLo<T_lo>& ref,
+    T_lo dcx, T_lo dcy,
+    int iter_lim,
+    f64& depth,
+    f64& dist,
+    f32& stripe,
+    StripeParams sp = {})
+{
+    using V2 = simd2::v2<T_lo>;
+
+    constexpr bool NEED_DIST = (bool)(F & MandelKernelFeatures::DIST);
+    constexpr bool NEED_STRIPES = (bool)(F & MandelKernelFeatures::STRIPES);
+    constexpr T_lo ER2 = T_lo(escape_radius<F>());
+
+    int ref_i = 0;
+    const int max_ref = std::max(0, ref.max_ref);
+
+    // --- derivative (for distance estimate) ---
+    T_lo ddx = T_lo(1);
+    T_lo ddy = T_lo(0);
+
+    // --- stripe accumulators ---
+    f32 sum = 0.0f, last_added = 0.0f;
+    int sum_samples = 0;
+    f32 freq = sp.freq;
+    f32 phase = sp.phase;
+
+    const auto V_ONE = V2::set(T_lo(1), T_lo(0));
+    const auto V_TWO = V2::set(T_lo(2), T_lo(2));
+    const auto V_DC = V2::set(dcx, dcy);
+
+    auto v_dx = V2::set(T_lo(0), T_lo(0));
+    auto v_zprev = V2::set(T_lo(0), T_lo(0));
+
+    for (int n = 0; n < iter_lim; ++n)
+    {
+        // 1) update derivative: t = 2*z_prev*dd + 1
+        if constexpr (NEED_DIST)
+        {
+            auto v_t = V2::add(V2::cmul(V2::mul(V_TWO, v_zprev), V2::set(ddx, ddy)), V_ONE);
+            ddx = v_t.x();  // single extract
+            ddy = v_t.y();
+        }
+
+        // 2) read reference z_pre and advance delta:
+        const T_lo c2x = ref.pre2x[ref_i];
+        const T_lo c2y = ref.pre2y[ref_i];
+
+        auto v_s = V2::add(V2::set(c2x, c2y), v_dx);
+        v_dx = V2::add(V2::cmul(v_dx, v_s), V_DC);
+
+
+        const T_lo zpostx = ref.post_x[ref_i];
+        const T_lo zposty = ref.post_y[ref_i];
+        auto v_zn1 = V2::add(V2::set(zpostx, zposty), v_dx);
+
+
+        // 4) STRIPES sampling on z_{n+1}
+        if constexpr (NEED_STRIPES) {
+            T_lo lanes[2];
+            V2{ v_zn1 }.store2(lanes);
+            // keep the loop pure-f32 on Wasm; cast only once here if T_lo is double
+            const float zax = (float)lanes[0];
+            const float zay = (float)lanes[1];
+
+            f32 a = std::atan2f((f32)zay, (f32)zax);
+            f32 s = 0.5f + 0.5f * std::sin(freq * a + phase);
+            last_added = s;
+            sum += s;
+            ++sum_samples;
+        }
+
+        // 5) escape test
+        const T_lo r2 = V2::dot(v_zn1);
+        if (r2 > ER2)
+        {
+            // smooth ITER
+            const f64 r2d = (f64)r2;
+            const f64 log_abs_z = 0.5 * std::log(std::max(r2d, 1e-300));
+            const f64 nu = f64(n + 1) + 1.0 - std::log2(std::max(log_abs_z, 1e-300));
+            depth = nu - mandelbrot_smoothing_offset<F>();
+
+            // DIST
+            if constexpr (NEED_DIST) {
+                const T_lo r = T_lo(std::sqrt((f64)r2));
+                const T_lo dzabs = T_lo(std::hypot((f64)ddx, (f64)ddy));
+                dist = (dzabs == 0) ? 0 : (r * std::log(r) / dzabs);
+            }
+            else {
+                dist = 0;
+            }
+
+            // STRIPE
+            if constexpr (NEED_STRIPES) {
+                f32 avg = (sum_samples > 0) ? (sum / (f32)sum_samples) : 0.0f;
+                f32 prev = (sum_samples > 1) ? ((sum - last_added) / (f32)(sum_samples - 1)) : avg;
+
+                const f64 log_r2 = std::max((f64)std::log(r2), 1e-300);
+                f32 frac = 1.0f + (f32)std::log2((f64)log_escape_radius_squared<F>() / log_r2);
+                frac = clamp01(frac);
+
+                f32 mix = frac * avg + (1.0f - frac) * prev;
+                mix = 0.5f + 0.5f * std::tanhf(sp.contrast * (mix - 0.5f));
+                stripe = clamp01(mix);
+            }
+            else {
+                stripe = 0;
+            }
+
+            return true;
+        }
+
+        // rebase (still no extracts needed except writing zx_prev/zy_prev when you rebase)
+        const T_lo d2 = V2::dot(v_dx);
+        bool must_rebase = (ref_i == max_ref);
+        if (!must_rebase) {
+            constexpr T_lo ALPHA2 = (T_lo)(0.75f * 0.75f);
+            constexpr T_lo H = (T_lo)0.95f;
+
+            const T_lo lim2 = ALPHA2 * ref.slack2[ref_i];
+            must_rebase |= (lim2 > T_lo(0) && d2 > lim2);
+            must_rebase |= (r2 < H * d2);
+        }
+
+        if (must_rebase) {
+            // delta := absolute z, and keep prev = z
+            v_dx = v_zn1;
+            v_zprev = v_zn1;
+            ref_i = 0;
+            continue;
+        }
+
+        // advance to next reference step (no wrap)
+        ++ref_i;
+
+        // 7) carry z_{n+1} to next step as z_n
+        v_zprev = v_zn1;
+    }
+
+    // Did not escape
+    depth = INSIDE_MANDELBROT_SET;
+    if constexpr (NEED_DIST)    dist = T_lo(-1);
+    if constexpr (NEED_STRIPES) stripe = T_lo(0);
+    return true;
+}*/
+
+
+
+
+
+template<typename T, MandelKernelFeatures F, MandelKernelMode kernel_mode>
 bool mandelbrot_perturbation(
     CanvasImage128* bmp, 
     EscapeField* field, 
@@ -554,33 +1126,27 @@ bool mandelbrot_perturbation(
     int iter_lim,
     int timeout,
     TileBlockProgress& P,
-    int m1, int m2, int m3,
-    StripeParams stripe_params = {})
+    StripeParams stripe_params)
 {
     typedef min_float_t<f64, T> T_lo;
+    //typedef f32 T_lo;
 
     int threads = Thread::threadCount();
-
-    // quickly calclate pixels using reference
-    int compute_tiles;
-    switch (field->compute_phase)
-    {
-    case 0: compute_tiles = (threads * m1); break;
-    case 1: compute_tiles = (threads * m2); break;
-    case 2: compute_tiles = (threads * m3); break;
-    default: compute_tiles = threads; break;
-    }
+    int compute_tiles = threads;
 
     f32 tiles_sqrt = ceil(sqrt((f32)compute_tiles));
     int tile_w = (int)ceil((f32)bmp->width() / tiles_sqrt);
     int tile_h = (int)ceil((f32)bmp->height() / tiles_sqrt);
     bool frame_complete = false;
 
-    if constexpr (perturbation)
+    if constexpr (
+        kernel_mode == MandelKernelMode::PERTURBATION ||
+        kernel_mode == MandelKernelMode::PERTURBATION_SIMD ||
+        kernel_mode == MandelKernelMode::PERTURBATION_SIMD_UNROLLED)
     {
         // get high precision anchor world pos
         RefOrbitLo<T_lo> orbit_lo;
-        Vec2<T> anchor;        bmp->worldPos<T>(bmp->width()/2, bmp->height()/2, anchor.x, anchor.y);
+        Vec2<T> anchor; bmp->worldPos<T>(bmp->width()/2, bmp->height()/2, anchor.x, anchor.y);
 
         // calculate reference orbit in high precision, downcast to low
         {
@@ -601,7 +1167,14 @@ bool mandelbrot_perturbation(
             const T_lo dcy_lo = (T_lo)(wy - anchor.y);
 
             f64 dist; f32 stripe{};
-            mandel_kernel_approx_rebase<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+
+            if constexpr (kernel_mode == MandelKernelMode::PERTURBATION_SIMD_UNROLLED)
+                mandel_kernel_approx_rebase_simd_unrolled<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+            else if (kernel_mode == MandelKernelMode::PERTURBATION_SIMD)
+                mandel_kernel_approx_rebase_simd<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+            else
+                mandel_kernel_approx_rebase<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+
             field_pixel.set(depth, dist, stripe);
 
         }, compute_tiles, timeout);
@@ -625,7 +1198,13 @@ bool mandelbrot_perturbation(
             const T_lo dcx_lo = (T_lo)(world_pos.x - anchor.x);
             const T_lo dcy_lo = (T_lo)(world_pos.y - anchor.y);
             f64 depth, dist; f32 stripe;
-            mandel_kernel_approx_rebase<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+
+            if constexpr (kernel_mode == MandelKernelMode::PERTURBATION_SIMD_UNROLLED)
+                mandel_kernel_approx_rebase_simd_unrolled<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+            else if (kernel_mode == MandelKernelMode::PERTURBATION_SIMD)
+                mandel_kernel_approx_rebase_simd<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+            else
+                mandel_kernel_approx_rebase<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
 
             field_pixel.set(depth, dist, stripe);
 
