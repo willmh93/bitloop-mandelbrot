@@ -199,7 +199,7 @@ void Cardioid_Scene::UI::sidebar()
     bl_scoped(interactive);
     bl_scoped(interact_angle_step);
     bl_scoped(interact_spin_mult);
-    bl_scoped(interact_angle);
+    //bl_scoped(interact_angle);
     bl_scoped(interact_dist);
 
     bl_scoped(ani_angle);
@@ -539,8 +539,8 @@ void Cardioid_Scene::fullPlotAlternative(Viewport* ctx, double scale, double ox)
     for (double angle = 0.0; angle < Math::TWO_PI; angle += angle_step)
     {
         //double a = sin(angle * 0.5);
-        double plot_x = cos(angle) * pow(sin(angle * 0.5), 2) + (ox + 0.25) * scale;
-        double plot_y = sin(angle) * pow(sin(angle * 0.5), 2);
+        double plot_x = cos(angle) * pow(sin(angle * 0.5), 2.0) + (ox + 0.25) * scale;
+        double plot_y = sin(angle) * pow(sin(angle * 0.5), 2.0);
 
         if (first)
         {

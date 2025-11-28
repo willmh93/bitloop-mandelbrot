@@ -43,7 +43,7 @@ inline void colorGradientTemplate(double t, uint8_t& r, uint8_t& g, uint8_t& b)
     }
 }
 
-inline void transformGradient(ImGradient& dest, ImGradient& src, float gradient_shift, float hue_shift)
+inline void transformGradient(ImGradient& dest, const ImGradient& src, float gradient_shift, float hue_shift)
 {
     auto& marks = src.getMarks();
     auto& shifted_marks = dest.getMarks();

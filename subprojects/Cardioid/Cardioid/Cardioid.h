@@ -52,7 +52,7 @@ inline double originalAngleFromPoint(
     int maxIter = 50)
 {
     // Check if inside unstable region for Newton's method
-    double y_bound = 0.001 + 4 * pow(px - 0.23, 2);
+    double y_bound = 0.001 + 4 * pow(px - 0.23, 2.0);
     if (px >= 0.25 && py < y_bound && py > -y_bound)
         return originalAngleBinarySearch(px, py);
 
@@ -257,6 +257,7 @@ struct CardioidLerper : public std::vector<LerpedCardioid>
         CumulativeCardioid cumulative_cardioid = createCumulativeCardioid(angle_step);
         int steps = static_cast<int>(round(1.0 / scale_step));
         double scale = 0.0;
+        clear();
         for (int i = 0; i <= steps; i++)
         {
             push_back(cumulative_cardioid.computeSegments(scale));

@@ -152,7 +152,7 @@ double Mandelbrot_Scene::lerpState(
     // stripe shader
     this->stripe_params.freq = Math::lerp(a.stripe_params.freq, b.stripe_params.freq, color_cycle_f);
     this->stripe_params.phase = Math::lerp(a.stripe_params.phase, b.stripe_params.phase, color_cycle_f);
-    this->stripe_params.contrast = Math::lerp(a.stripe_params.contrast, b.stripe_params.contrast, color_cycle_f);
+    //this->stripe_params.contrast = Math::lerp(a.stripe_params.contrast, b.stripe_params.contrast, color_cycle_f);
 
     // lerp gradient/hue shift
     this->gradient_shift = Math::lerp(a.gradient_shift, b.gradient_shift, pos_f);

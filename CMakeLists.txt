@@ -9,6 +9,7 @@ endif()
 # Gather source files for this project
 file(GLOB SIM_SOURCES CONFIGURE_DEPENDS
 	"Mandelbrot/*.cpp"
+	"Mandelbrot/*.hpp"
 	"Mandelbrot/*.h"
 )
 

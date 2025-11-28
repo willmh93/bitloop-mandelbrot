@@ -1,15 +1,18 @@
 #pragma once
+
+// Include build_config.h before bitloop.h
+#include "build_config.h"
+
 #include <bitloop.h>
 #include <cmath>
 
 #include "Cardioid/Cardioid.h"
 
 // Mandelbrot includes
-#include "build_config.h"
 
 #include "types.h"
+#include "conversions.h"
 #include "mandel_state.h"
-#include "compute.h"
 #include "shading.h"
 #include "gradient.h"
 #include "tween_splines.h"
@@ -61,6 +64,10 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     // ────── gradients ──────
     ImGradient gradient_shifted;
 
+    // ────── shading ──────
+    ToneManager<f64> dist_tone;
+    ToneManager<f32> stripe_tone;
+
 
     // ────── Splines ──────
     ImSpline::Spline x_spline               = MandelSplines::x_spline;
@@ -96,17 +103,32 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     EscapeField* pending_field = nullptr;
     EscapeField* active_field = nullptr;
 
+    // ────── normalization ──────
     NormalizationField norm_field;
+
+    /// todo: lerped means/ranges for smoother zoom
+    //NormalizationField norm_field_zoom_out;
+    //NormalizationField norm_field_zoom_in;
+    //NormalizationField norm_field_pan_tl;
+    //NormalizationField norm_field_pan_tr;
+    //NormalizationField norm_field_pan_bl;
+    //NormalizationField norm_field_pan_br;
+
     bool preview_normalization_field = false;
-
+    
+    // ────── stats ──────
     MandelStats stats;
+    
 
-    // ────── dynamicly set at runtime ──────
-    bool    display_intro = true;
-    double  log_color_cycle_iters = 0.0;
-    int     iter_lim = 0; // Actual iter limit
+    // ────── dynamic ──────
+    bool           display_intro = true;
+    double         log_color_cycle_iters = 0.0;
+    int            iter_lim = 0; // real iteration limit fed to mandelbrot kernel
+    KernelFeatures mandel_features = KernelFeatures::ITER;
+    KernelMode     kernel_mode = KernelMode::AUTO;
+
+    // multi-frame tile progress tracker for the pending phase
     TileBlockProgress P;
-    //int     current_tile = 0;
 
     // phase 0 = 9x smaller
     // phase 1 = 3x smaller
@@ -117,14 +139,17 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     bool final_frame_complete = true;
     DDQuad world_quad{};
 
-    // ────── expensive interior "forwarding" optimization ──────
+    // ────── interior-forwarding optimization ──────
     struct {
+        // c1, e1: [contract, expand] phase 0 interior => forward to phase 1
+        // c2, e2: [contract, expand] phase 1 interior => forward to phase 2
+        // This prevents forwarding results of interior edges (but can fail at sharp angles if too aggressive)
         int c1 = 5, e1 = 3, c2 = 7, e2 = 3;
     }  interior_phases_contract_expand;
 
     bool maxdepth_show_optimized = false;
 
-    MandelKernelMode kernel_mode = MandelKernelMode::AUTO;
+    
 
     // ────── timers ──────
     std::chrono::steady_clock::time_point compute_t0;
@@ -146,12 +171,12 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
 
     // ────── deep-zoom animation (temporary until timeline feature added) ──────
     bool steady_zoom = false;
-    //f128 steady_zoom_mult_speed{ 0.01 };
-    f128 steady_zoom_mult_speed{ 0.05 };
+    f128 steady_zoom_mult_speed{ 0.01 };
+    //f128 steady_zoom_mult_speed{ 0.05 };
     float steady_zoom_pct = 0;
     int tween_frames_elapsed = 0;
     int tween_expected_frames = 0;
-    Math::MovingAverage::MA<double> expected_time_left_ma = Math::MovingAverage::MA<double>(5);
+    Math::MovingAverage::MA<f64> expected_time_left_ma = Math::MovingAverage::MA<f64>(5); // TODO: Use or remove
 
     // ────── cardioid ──────
     bool show_period2_bulb = true;
@@ -163,7 +188,8 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     double ani_inc = Math::toRadians(2.0);
     #endif
 
-    double cardioid_lerp_amount = 1.0; // 1 - flatten
+    // ────── extra features ──────
+    double cardioid_lerp_amount = 1.0; // 0 = flatten
     Cardioid::CardioidLerper cardioid_lerper;
 
     // ────── user interface ──────
@@ -171,9 +197,9 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     {
         using Interface::Interface;
 
+        void init();
         void overlay();
         void sidebar();
-
 
         // dialog flags
         bool show_save_dialog = false;
@@ -187,10 +213,7 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
         std::string url_buf;
         std::string data_buf;
 
-        // stats
-        std::vector<int> depth_xs, depth_ys;
-        std::vector<int> stripe_xs;
-        //std::vector<double> max_depth_xs, max_depth_ys;
+        double orbit_padding = 0.3;
 
         // UI sections
         void populateSavingLoading();
@@ -211,6 +234,19 @@ struct Mandelbrot_Scene : public MandelState, public Scene<Mandelbrot_Scene>
     void sceneStart() override;
     void sceneDestroy() override;
     void sceneMounted(Viewport* viewport) override;
+
+    // ────── compute ──────
+    template<typename T, KernelFeatures F, KernelMode K>  
+    bool compute_mandelbrot(int timeout);
+
+    template<typename T, KernelFeatures F, bool Normalize_Depth, bool Invert_Dist>
+    void calculate_normalize_info();
+
+    template<typename T, KernelFeatures F, bool Normalize_Depth, bool Invert_Dist>
+    void normalize_field();
+
+    template<MandelShaderFormula F, bool Highlight_Optimized_Interior>
+    void shadeBitmap();
 
     // ────── viewport handling ──────
     bool mandelChanged();
@@ -243,6 +279,5 @@ struct Mandelbrot_Project : public BasicProject
     void projectPrepare(Layout& layout) override;
 };
 
-#undef DEV_MODE
-
 SIM_END;
+

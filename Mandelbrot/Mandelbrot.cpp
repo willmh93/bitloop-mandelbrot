@@ -1,5 +1,6 @@
 
 #include "Mandelbrot.h"
+#include "mandel_process.hpp"
 
 SIM_BEG;
 
@@ -81,6 +82,7 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     bool finished_compute = false;
     if (!final_frame_complete)
     {
+        // compute the unnormalized base data needed for the normalization/reshading stages
         finished_compute = processCompute();
     }
 
@@ -96,21 +98,17 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     if (renormalize)
     {
         FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
+        bool normalize_depth = iter_params.cycle_iter_normalize_depth;
+        bool invert_dist = dist_params.cycle_dist_invert;
 
-        table_invoke(build_table(calculate_normalize_info, [&], active_field, norm_field, camera, iter_params, dist_params),
-            float_type);
-
-        table_invoke(build_table(normalize_field, [&], active_field, active_bmp, iter_params, dist_params),
-            float_type, mandel_features, iter_params.cycle_iter_normalize_depth);
+        table_invoke(dispatch_table(calculate_normalize_info), float_type, mandel_features, normalize_depth, invert_dist);
+        table_invoke(dispatch_table(normalize_field),          float_type, mandel_features, normalize_depth, invert_dist);
     }
 
     // ────── reshade if data renormalized, or gradient changed ──────
     if (reshade)
     {
-        table_invoke(
-            build_table(shadeBitmap, [&], active_field, active_bmp, &gradient_shifted, (float)iter_weight, (float)dist_weight, (float)stripe_weight),
-            (MandelShaderFormula)shade_formula, maxdepth_show_optimized
-        );
+        table_invoke(dispatch_table(shadeBitmap), (MandelShaderFormula)shade_formula, maxdepth_show_optimized);
     }
 
     // unless we're doing a steady-zoom animation, capture basic animated shading every frame
@@ -132,6 +130,7 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
 
     // Gather stats / realtime info
     collectStats(renormalize);
+
 }
 
 void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
@@ -160,18 +159,8 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
             float rad = std::max(1.0f, p.weight * 4.0f);
             ctx->fillEllipse<f128>(p.stage_pos, rad);
         }
-
-        //ctx->setStrokeStyle(255, 255, 255);
-        //ctx->strokeQuad(norm_field.bounds.stageQuad());
 		ctx->worldMode();
     }
-
-    //ctx->worldHudMode();
-    //for (DVec2 p : active_field->plots)
-    //{
-    //    ctx->fillEllipse(p, 2.0);
-    //}
-    //ctx->worldMode();
 
     #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
     if (show_interactive_cardioid && zoom_mag < 1000000.0)
@@ -200,13 +189,10 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
 
     ctx->stageMode();
 
-    ///ctx->print() << "Shift: " << gradient_shift;
-    ///ctx->print() << "\nFPS Factor: " << fpsFactor();
-
     #ifndef BL_DEBUG
-    // Show intro message on startup
     if (display_intro)
     {
+        // intro message on startup
         ctx->setFont(font);
         ctx->setFontSize(20);
 
@@ -230,58 +216,7 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
         ctx->fillText("Contact:  will.hemsworth@bitloop.dev", scale_size(10.0), ctx->height() - scale_size(10.0));
     }
     #endif
-
-    ///navigator.debugPrint(ctx);
-
-    /*ctx->print() << "\ntween_frames_elapsed: " << tween_frames_elapsed << "\n";
-    ctx->print() << "tween_expected_frames: " << tween_expected_frames << "\n";
-    ctx->print() << "time remaining: " << expected_time_left_ma.average() << "\n";*/
-
-    //for (auto pair : ui_stage)
-    //{
-    //    auto entry = pair.second;
-    //    ctx->print() << entry.name << " live value: " << entry.to_string_value() << "\n";
-    //    //ctx->print() << entry.name << " live mrked: " << entry.to_string_marked_live() << "\n";
-        //ctx->print() << entry.name << " shdw mrked: " << entry.to_string_marked_shadow() << "\n";
-    //}
-
-   
-
-    //DQuad quad = ctx->worldQuad();
-    //bool x_axis_visible = quad.intersects({ {quad.minX(), 0}, {quad.maxX(), 0}});
-    //ctx->print() << "\nx_axis_visible: " << (x_axis_visible ? "true" : "false");
-
-    //ctx->printTouchInfo();
-
-
-
-    //ctx->print() << "camera_vel: " << camera_vel_pos << "\n";
-
-    //if (input.touch.finger(0).pressed)
-    //{
-    //  minimizeMaximizeButton(ctx, false);
-    //}
-
-    //if (Input::Touch().Fingers(0).Released(minimizeMaximizeButton(ctx, false)))
-    //{
-    //
-    //}
-    //
-    //if (input.touch.now().fingers(0).clicked(minimizeMaximizeButton(ctx, false)))
-    //{
-    //}
 }
-
-
-//void Mandelbrot_Scene::onSavefileChanged()
-//{
-//    data_buf = serialize();
-//    #ifdef __EMSCRIPTEN__
-//    // Appears to slow down browser during animation - call less often or rely on save/load/share buttons only
-//    //platform()->url_set_string("data", data_buf.c_str());
-//    #endif
-//}
-
 
 void Mandelbrot_Scene::onEvent(Event e)
 {
@@ -320,11 +255,8 @@ void Mandelbrot_Scene::onEvent(Event e)
         camera_vel_pos = avg_vel_pos.average();
         camera_vel_zoom = (avg_vel_zoom.average() - 1) * 0.6 + 1;
 
-        if (!platform()->is_mobile())
-        {
-            // Stopped wheeling mouse
+        if (!platform()->is_mobile()) // Stopped wheeling mouse
             avg_vel_zoom.clear();
-        }
     }
 
     if (e.type() == SDL_EVENT_MOUSE_BUTTON_UP)

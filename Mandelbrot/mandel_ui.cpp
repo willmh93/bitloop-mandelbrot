@@ -1,4 +1,6 @@
 ﻿#include "Mandelbrot.h"
+#include "compute.h"
+
 #ifdef __EMSCRIPTEN__
 #include <bitloop/platform/emscripten_browser_clipboard.h>
 #endif
@@ -20,6 +22,12 @@ std::string dataToURL(std::string data_buf)
 //   static bool is_fullscreen = false;
 //   DrawFullscreenOverlayButton(&is_fullscreen, ImVec2(24, 24), 30.0f, 0.66f);
 
+void Mandelbrot_Scene::UI::init()
+{
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.HoverStationaryDelay = 0.50f;
+}
+
 void Mandelbrot_Scene::UI::sidebar()
 {
     bl_scoped(tweening);
@@ -27,9 +35,11 @@ void Mandelbrot_Scene::UI::sidebar()
     if (tweening)
         ImGui::BeginDisabled();
 
+    // _ChatGPT_ [test githook]
+
     populateSavingLoading();
-    populateExamples();
     populateCameraView();
+    populateExamples();
     populateQualityOptions();
     populateColorCycleOptions();
     populateGradientShiftOptions();
@@ -49,10 +59,7 @@ void Mandelbrot_Scene::UI::sidebar()
 }
 
 
-bool DrawFullscreenOverlayButton(bool* fullscreen,
-    ImVec2 screen_pos,
-    float size = 30.0f,
-    float alpha = 0.66f)
+bool DrawFullscreenOverlayButton(bool* fullscreen, bool *was_held, ImVec2 screen_pos, float size = 30.0f, float alpha = 0.66f)
 {
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     ImGuiIO& io = ImGui::GetIO();
@@ -69,7 +76,8 @@ bool DrawFullscreenOverlayButton(bool* fullscreen,
     // Hit test
     const bool hovered = r.Contains(io.MousePos);
     const bool held = hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    const bool pressed = hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    const bool clicked = hovered && *was_held && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    *was_held = held;
 
     // Background
     const float rounding = size / 6.0f;
@@ -120,7 +128,7 @@ bool DrawFullscreenOverlayButton(bool* fullscreen,
         lineL(ImVec2(ib.x, ib.y), ImVec2(+1, 0), ImVec2(0, +1)); // bottom-right inward
     }
 
-    if (pressed)
+    if (clicked)
     {
         *fullscreen = !*fullscreen;
         return true;
@@ -136,7 +144,8 @@ void Mandelbrot_Scene::UI::overlay()
 
     SDL_WindowFlags flags = SDL_GetWindowFlags(platform()->sdl_window());
     bool fullscreen = (flags & SDL_WINDOW_FULLSCREEN);
-    if (DrawFullscreenOverlayButton(&fullscreen, scale_size(ctx_size.x - btn_size - btn_space, btn_space), scale_size(btn_size)))
+    static bool fullscreen_btn_held = false;
+    if (DrawFullscreenOverlayButton(&fullscreen, &fullscreen_btn_held, scale_size(ctx_size.x - btn_size - btn_space, btn_space), scale_size(btn_size)))
     {
         SDL_SetWindowFullscreen(platform()->sdl_window(), fullscreen);
         main_window()->setSidebarVisible(!fullscreen);
@@ -145,7 +154,7 @@ void Mandelbrot_Scene::UI::overlay()
 
 void Mandelbrot_Scene::UI::populateSavingLoading()
 {
-    if (ImGui::Section("Saving & Loading", true, 0))
+    if (ImGui::CollapsingHeaderBox("Saving & Loading", true))
     {
         if (ImGui::Button("Save"))
         {
@@ -289,11 +298,60 @@ void Mandelbrot_Scene::UI::populateSavingLoading()
             if (ImGui::Button("Close")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
+
+        ImGui::EndCollapsingHeaderBox();
+    }
+}
+void Mandelbrot_Scene::UI::populateCameraView()
+{
+    bl_scoped(flatten);
+    bl_scoped(camera);
+
+    //static bool show_view_by_default = !platform()->is_mobile(); // Expect navigate by touch for mobile
+    if (ImGui::CollapsingHeaderBox("View", true))
+    {
+        bl_scoped(show_axis);
+
+        ImGui::Checkbox("Show Axis", &show_axis);
+
+        #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
+        bl_scoped(show_interactive_cardioid);
+        bl_scoped(ani_angle);
+        bl_scoped(ani_inc);
+        bl_scoped(animate_cardioid_angle);
+
+        if (!flatten && !platform()->is_mobile())
+        {
+            ImGui::SameLine();
+            ImGui::Dummy(ImVec2(10.0f, 0.0f));
+            ImGui::SameLine();
+            ImGui::Checkbox("Show Interactive Cardioid", &show_interactive_cardioid);
+        }
+        #endif
+
+        camera.populateUI({ -5.0, -5.0, 5.0, 5.0 });
+
+        #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
+        if (show_interactive_cardioid)
+        {
+            //ImGui::GroupBox box("cardioid_group", "Interactive Cardioid", scale_size(13.0f), scale_size(20.0f));
+            ImGui::BeginLabelledBox("Interactive Cardioid");
+
+            ImGui::Checkbox("Apply Animation", &animate_cardioid_angle);
+            ImGui::SliderAngle("Angle", &ani_angle);
+            if (animate_cardioid_angle)
+                ImGui::SliderAngle("Angle Step", &ani_inc, -Math::HALF_PI, Math::HALF_PI, 1);
+
+            ImGui::EndLabelledBox();
+        }
+        #endif
+
+        ImGui::EndCollapsingHeaderBox();
     }
 }
 void Mandelbrot_Scene::UI::populateExamples()
 {
-    if (ImGui::Section("Examples", true))
+    if (ImGui::CollapsingHeaderBox("Examples", true))
     {
         bl_scoped(steady_zoom);
 
@@ -368,58 +426,16 @@ void Mandelbrot_Scene::UI::populateExamples()
             }
             ImGui::EndTable();
         }
-    }
-}
-void Mandelbrot_Scene::UI::populateCameraView()
-{
-    bl_scoped(flatten);
-    bl_scoped(camera);
 
-    //static bool show_view_by_default = !platform()->is_mobile(); // Expect navigate by touch for mobile
-    if (ImGui::Section("View", true))
-    {
-        bl_scoped(show_axis);
-
-        ImGui::Checkbox("Show Axis", &show_axis);
-
-        #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
-        bl_scoped(show_interactive_cardioid);
-        bl_scoped(ani_angle);
-        bl_scoped(ani_inc);
-        bl_scoped(animate_cardioid_angle);
-
-        if (!flatten && !platform()->is_mobile())
-        {
-            ImGui::SameLine();
-            ImGui::Dummy(ImVec2(10.0f, 0.0f));
-            ImGui::SameLine();
-            ImGui::Checkbox("Show Interactive Cardioid", &show_interactive_cardioid);
-        }
-        #endif
-
-        camera.populateUI({ -5.0, -5.0, 5.0, 5.0 });
-
-        #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
-        if (show_interactive_cardioid)
-        {
-            ImGui::GroupBox box("cardioid_group", "Interactive Cardioid", scale_size(13.0f), scale_size(20.0f));
-            ImGui::Checkbox("Apply Animation", &animate_cardioid_angle);
-            ImGui::SliderAngle("Angle", &ani_angle);
-            if (animate_cardioid_angle)
-                ImGui::SliderAngle("Angle Step", &ani_inc, -Math::HALF_PI, Math::HALF_PI, 1);
-        }
-        #endif
+        ImGui::EndCollapsingHeaderBox();
     }
 }
 void Mandelbrot_Scene::UI::populateQualityOptions()
 {
-    if (ImGui::Section("Quality", false))
+    if (ImGui::CollapsingHeaderBox("Quality", false))
     {
-        bl_scoped(dynamic_iter_lim);
-        bl_scoped(quality);
-        bl_scoped(iter_lim);
-        bl_scoped(camera);
-        bl_scoped(tweening);
+        bl_view(camera, iter_lim, tweening);
+        bl_scoped(dynamic_iter_lim, quality);
 
         if (ImGui::Checkbox("Dynamic Iteration Limit", &dynamic_iter_lim))
         {
@@ -448,20 +464,20 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
         else
             ImGui::DragDouble("Max Iterations", &quality, 1000.0, 1.0, 1000000.0, "%.0f", ImGuiSliderFlags_Logarithmic);
 
-        bl_scoped(maxdepth_optimize);
+        bl_scoped(interior_forwarding);
         bl_scoped(interior_phases_contract_expand);
         bl_scoped(maxdepth_show_optimized);
 
         ImGui::Spacing(); ImGui::Spacing();
-        ImGui::Text("Max-depth result forwarding");
-        if (ImGui::Combo("###MandelMaxDepthOptimization", &maxdepth_optimize, MandelMaxDepthOptimizationNames, (int)MandelMaxDepthOptimization::COUNT))
+        ImGui::Text("Interior forwarding");
+        if (ImGui::Combo("###MandelInteriorForwarding", &interior_forwarding, MandelMaxDepthOptimizationNames, (int)MandelInteriorForwarding::COUNT))
         {
-            switch ((MandelMaxDepthOptimization)maxdepth_optimize)
+            switch ((MandelInteriorForwarding)interior_forwarding)
             {
-            case MandelMaxDepthOptimization::SLOWEST: interior_phases_contract_expand = { 10, 0, 10, 0 }; break;
-            case MandelMaxDepthOptimization::SLOW:    interior_phases_contract_expand = { 6, 2, 8, 2 };   break;
-            case MandelMaxDepthOptimization::MEDIUM:  interior_phases_contract_expand = { 5, 3, 7, 3 };   break;
-            case MandelMaxDepthOptimization::FAST:    interior_phases_contract_expand = { 1, 0, 1, 0 };   break;
+            case MandelInteriorForwarding::SLOWEST: interior_phases_contract_expand = { 10, 0, 10, 0 }; break;
+            case MandelInteriorForwarding::SLOW:    interior_phases_contract_expand = { 6, 2, 8, 2 };   break;
+            case MandelInteriorForwarding::MEDIUM:  interior_phases_contract_expand = { 5, 3, 7, 3 };   break;
+            case MandelInteriorForwarding::FAST:    interior_phases_contract_expand = { 1, 0, 1, 0 };   break;
             default: break;
             }
         }
@@ -472,50 +488,85 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
         bl_scoped(kernel_mode);
         ImGui::Text("Kernel Mode");
         ///--------------------------------------------------------------------------------------------------------------------------
-        ImGui::RadioButton("Auto",                          &(int&)kernel_mode, (int)MandelKernelMode::AUTO);
-        ImGui::RadioButton("No Perturbation",               &(int&)kernel_mode, (int)MandelKernelMode::NO_PERTURBATION);
-        ImGui::RadioButton("Perturbation (no SIMD)",        &(int&)kernel_mode, (int)MandelKernelMode::PERTURBATION);
-        ImGui::RadioButton("Perturbation (SIMD)",           &(int&)kernel_mode, (int)MandelKernelMode::PERTURBATION_SIMD);
-        ImGui::RadioButton("Perturbation (SIMD, unrolled)", &(int&)kernel_mode, (int)MandelKernelMode::PERTURBATION_SIMD_UNROLLED);
+        ImGui::RadioButton("Auto",                            &(int&)kernel_mode, (int)KernelMode::AUTO);
+        ImGui::RadioButton("No Perturbation",                 &(int&)kernel_mode, (int)KernelMode::NO_PERTURBATION);
+        ImGui::RadioButton("Perturbation (no SIMD)",          &(int&)kernel_mode, (int)KernelMode::PERTURBATION);
+        ImGui::RadioButton("Perturbation (SIMD)",             &(int&)kernel_mode, (int)KernelMode::PERTURBATION_SIMD);
+        ImGui::RadioButton("Perturbation (SIMD, unrolled)",   &(int&)kernel_mode, (int)KernelMode::PERTURBATION_SIMD_UNROLLED);
         ///--------------------------------------------------------------------------------------------------------------------------
+
+        ImGui::EndCollapsingHeaderBox();
     }
 
-    if (ImGui::Section("Normalization Sampling", false))
+    if (ImGui::CollapsingHeaderBox("Normalization Sampling", false))
     {
-        ImGui::PushID("normalization");
         bl_scoped(normalize_field_scale);
         bl_scoped(normalize_field_quality);
         bl_scoped(normalize_field_exponent);
+        bl_scoped(normalize_field_precision);
         bl_scoped(preview_normalization_field);
         static double init_normalize_field_scale = normalize_field_scale;
         static double init_normalize_field_quality = normalize_field_quality;
         static double init_normalize_field_exponent = normalize_field_exponent;
+        static double init_normalize_field_precision = normalize_field_precision;
         ImGui::Checkbox("Preview", &preview_normalization_field);
+
         ImGui::RevertableSliderDouble("Scale", &normalize_field_scale, &init_normalize_field_scale, 0.5, 4.0, "%.2f");
+        ImGui::SetItemTooltip("Controls size of normalization field.\n(samples outside of viewport must be calculated)");
+
         ImGui::RevertableSliderDouble("Quality", &normalize_field_quality, &init_normalize_field_quality, 0.1, 1.0, "%.2f");
+        ImGui::SetItemTooltip("Controls the number of samples taken.\n(Keep low for better performance, especially if Scale is high)");
+
         ImGui::RevertableSliderDouble("Exponent", &normalize_field_exponent, &init_normalize_field_exponent, 1.0, 4.0, "%.2f");
-        ImGui::PopID();
+        ImGui::SetItemTooltip("Higher = Sample more heavily near camera center.\n(useful for zoom animations, otherwise keep at 1.0)");
+        
+        ImGui::RevertableSliderDouble("Precision", &normalize_field_precision, &normalize_field_precision, 0.0, 1.0, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SetItemTooltip("0 = Always reuse nearest cached pixel where possible (faster)\n1 = Always recalculate at exact sample coordinate (reduces flicker)");
+
+        if (normalize_field_precision < 0.2)
+        {
+            if (normalize_field_scale > 1.5 && normalize_field_quality > 0.4)
+            {
+                ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0, 0.2, 0.2, 1.0));
+                ImGui::TextUnformatted("Warning:\n   Sampling heavily outside of viewport,\n   performance may start to suffer.");
+                ImGui::PopStyleColor();
+            }
+        }
+        else
+        {
+            if (normalize_field_quality > 0.25)
+            {
+                ImGui::Spacing(); 
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0, 0.2, 0.2, 1.0));
+                ImGui::TextUnformatted("Warning:\n   Large sample count,\n   performance may start to suffer.");
+                ImGui::PopStyleColor();
+            }
+        }
+
+        ImGui::EndCollapsingHeaderBox();
     }
+    //if (ImGui::BeginSectionBox("AAA", false))
+    //{
+    //    ImGui::EndSectionBox();
+    //}
+    //if (ImGui::BeginSectionBox("BBB", false))
+    //{
+    //    ImGui::EndSectionBox();
+    //}
+    //if (ImGui::BeginSectionBox("CCC", false))
+    //{
+    //    ImGui::EndSectionBox();
+    //}
 }
 void Mandelbrot_Scene::UI::populateColorCycleOptions()
 {
-    if (ImGui::Section("Colour Cycle", true))
+    if (ImGui::CollapsingHeaderBox("Mandelbrot Parameters", false))
     {
-        bl_scoped(tweening);
-        bl_scoped(iter_lim);
-        bl_scoped(camera);
-        bl_scoped(quality);
-        bl_scoped(dynamic_iter_lim);
-
         // Weights / Mix formula
         bl_scoped(iter_weight, dist_weight, stripe_weight);
         bl_scoped(shade_formula);
 
-        // Iter
-        bl_scoped(use_smoothing); /// todo
-
-        // Params
-        bl_scoped(iter_params, dist_params, stripe_params);
 
         double iter_ratio, dist_ratio, stripe_ratio;
         shadingRatios(
@@ -528,116 +579,251 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
         sprintf(dist_header, "Distance  -  %d%% Weight", (int)(dist_ratio * 100.0));
         sprintf(stripe_header, "Stripe  -  %d%% Weight", (int)(stripe_ratio * 100.0));
 
-        // ────── Color Cycle: ITER ──────
-        {
-            ImGui::GroupBox box("iter_group", iter_header, scale_size(13.0f), scale_size(20.0f));
-            ImGui::SliderDouble("Iter Ratio", &iter_weight, 0.0, 1.0, "%.2f");
-            ImGui::Spacing(); ImGui::Spacing();
 
-            if (ImGui::Checkbox("% of Max Iters", &iter_params.cycle_iter_dynamic_limit))
-            {
-                if (iter_params.cycle_iter_dynamic_limit)
-                    iter_params.cycle_iter_value /= iter_lim;
-                else
-                    iter_params.cycle_iter_value *= iter_lim;
-            }
-            ImGui::SameLine(); ImGui::Dummy(ImVec2(10.0f, 0.0f)); ImGui::SameLine();
-
-            ImGui::Checkbox("Smooth", &use_smoothing);
-            ImGui::Checkbox("Normalize to Zoom", &iter_params.cycle_iter_normalize_depth);
-
-
-            float required_space = 0.0f;
-            box.IncreaseRequiredSpaceForLabel(required_space, iter_params.cycle_iter_dynamic_limit ? "% Iterations" : "Iterations");
-            box.IncreaseRequiredSpaceForLabel(required_space, "Logarithmic");
-
-            double raw_cycle_iters;
-            if (iter_params.cycle_iter_dynamic_limit)
-            {
-                double cycle_pct = iter_params.cycle_iter_value * 100.0;
-
-                box.SetNextItemWidthForSpace(required_space);
-                ImGui::SliderDouble("% Iterations", &cycle_pct, 0.001, 100.0, "%.4f%%",
-                    (/*color_cycle_use_log1p ?*/ ImGuiSliderFlags_Logarithmic /*: 0*/) |
-                    ImGuiSliderFlags_AlwaysClamp);
-
-                iter_params.cycle_iter_value = cycle_pct / 100.0;
-
-                raw_cycle_iters = finalIterLimit(camera, quality, dynamic_iter_lim, tweening) * iter_params.cycle_iter_value;
-
-            }
-            else
-            {
-                box.SetNextItemWidthForSpace(required_space);
-                ImGui::SliderDouble("Iterations", &iter_params.cycle_iter_value, 1.0, (float)iter_lim, "%.3f",
-                    (/*color_cycle_use_log1p ?*/ ImGuiSliderFlags_Logarithmic /*: 0*/) |
-                    ImGuiSliderFlags_AlwaysClamp);
-
-                raw_cycle_iters = iter_params.cycle_iter_value;
-            }
-
-            double log_pct = iter_params.cycle_iter_log1p_weight * 100.0;
-            box.SetNextItemWidthForSpace(required_space);
-            if (ImGui::SliderDouble_InvLog("Logarithmic", &log_pct, 0.0, 100.0, "%.2f%%", ImGuiSliderFlags_NoRoundToFormat | ImGuiSliderFlags_AlwaysClamp))
-            {
-                iter_params.cycle_iter_log1p_weight = log_pct / 100.0;
-            }
-
-
-            ///// Print cycle iter values
-            ///{
-            ///    if (cycle_iter_dynamic_limit)
-            ///        ImGui::Text("raw_cycle_iters = %.1f", raw_cycle_iters);
-            ///
-            ///    double log_cycle_iters = Math::linear_log1p_lerp(raw_cycle_iters, cycle_iter_log1p_weight);
-            ///    ImGui::Text("log_cycle_iters = %.1f", log_cycle_iters);
-            ///}
-        }
-
-        // ────── Color Cycle: DIST ──────
-        {
-            ImGui::GroupBox box("dist_group", dist_header);
-            ImGui::SliderDouble("Dist Weight", &dist_weight, 0.0, 1.0, "%.2f");
-            ImGui::Spacing(); ImGui::Spacing();
-
-            float required_width = 0.0f;
-            box.IncreaseRequiredSpaceForLabel(required_width, "Dist");
-            box.IncreaseRequiredSpaceForLabel(required_width, "Sharpness");
-
-            ImGui::Checkbox("Invert", &dist_params.cycle_dist_invert);
-
-            box.SetNextItemWidthForSpace(required_width);
-            ImGui::SliderDouble("Dist", &dist_params.cycle_dist_value, 0.001, 1.0, "%.5f", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
-            ImGui::PushID("DistLog");
-            ImGui::PopID();
-
-            box.SetNextItemWidthForSpace(required_width);
-            ImGui::SliderDouble_InvLog("Sharpness", &dist_params.cycle_dist_sharpness, 0.0, 100.0, "%.4f%%", ImGuiSliderFlags_NoRoundToFormat | ImGuiSliderFlags_AlwaysClamp);
-        }
-
-        // ────── Color Cycle: STRIPE ──────
-        {
-            ImGui::GroupBox box("stripe_group", stripe_header);
-            ImGui::SliderDouble("Stripe Weight", &stripe_weight, 0.0, 1.0, "%.2f");
-            ImGui::Spacing();
-            ImGui::Spacing();
-
-            ImGui::SliderFloat("Frequency", &stripe_params.freq, 1.0f, 100.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-            ImGui::SliderAngle("Phase", &stripe_params.phase, 0.0f, Math::PI * 2.0f, 0, ImGuiSliderFlags_AlwaysClamp);
-            ImGui::SliderFloat("Contrast", &stripe_params.contrast, 0.1f, 10.0f, "%.3f", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
-        }
+        ImGui::SliderDouble("ITER Weight", &iter_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderDouble("DIST Weight", &dist_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderDouble("STRIPE Weight", &stripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 
         ImGui::Combo("###MandelFormula", &shade_formula, MandelFormulaNames, (int)MandelShaderFormula::COUNT);
+
+        ImGui::EndCollapsingHeaderBox();
+
+        if (ImGui::BeginTabBar("params_tabs"))
+        {
+            bl_scoped(iter_weight, dist_weight, stripe_weight);
+            bl_view(stats, camera, tweening);
+
+            if (iter_weight > 0.0001f && ImGui::TabBox("Iteration"))
+            {
+                //ImGui::Spacing();
+                //ImGui::GroupBox box("iter_group", nullptr);
+
+
+                float required_space = 0.0f;
+                ImGui::IncreaseRequiredSpaceForLabel(required_space, "% Iterations");
+
+                // ────── Color Cycle: ITER ──────
+                {
+                    bl_scoped(iter_params);
+                    bl_scoped(iter_lim);
+                    bl_scoped(quality);
+                    bl_scoped(dynamic_iter_lim);
+
+                    if (ImGui::Checkbox("% of Max Iters", &iter_params.cycle_iter_dynamic_limit))
+                    {
+                        if (iter_params.cycle_iter_dynamic_limit)
+                            iter_params.cycle_iter_value /= iter_lim;
+                        else
+                            iter_params.cycle_iter_value *= iter_lim;
+                    }
+                    ImGui::SameLine(); ImGui::Dummy(ImVec2(10.0f, 0.0f)); ImGui::SameLine();
+
+                    /// todo
+                    //bl_scoped(use_smoothing); 
+                    //ImGui::Checkbox("Smooth", &use_smoothing);
+
+                    ImGui::Checkbox("Normalize to Zoom", &iter_params.cycle_iter_normalize_depth);
+
+                    double raw_cycle_iters;
+                    if (iter_params.cycle_iter_dynamic_limit)
+                    {
+                        double cycle_pct = iter_params.cycle_iter_value * 100.0;
+
+                        ImGui::SetNextItemWidthForSpace(required_space);
+                        ImGui::SliderDouble("% Iterations", &cycle_pct, 0.001, 100.0, "%.4f%%",
+                            (/*color_cycle_use_log1p ?*/ ImGuiSliderFlags_Logarithmic /*: 0*/) |
+                            ImGuiSliderFlags_AlwaysClamp);
+
+                        iter_params.cycle_iter_value = cycle_pct / 100.0;
+
+                        raw_cycle_iters = finalIterLimit(camera, quality, dynamic_iter_lim, tweening) * iter_params.cycle_iter_value;
+
+                    }
+                    else
+                    {
+                        ImGui::SetNextItemWidthForSpace(required_space);
+                        ImGui::SliderDouble("Iterations", &iter_params.cycle_iter_value, 1.0, (float)iter_lim, "%.3f",
+                            (/*color_cycle_use_log1p ?*/ ImGuiSliderFlags_Logarithmic /*: 0*/) |
+                            ImGuiSliderFlags_AlwaysClamp);
+
+                        raw_cycle_iters = iter_params.cycle_iter_value;
+                    }
+
+                    double log_pct = iter_params.cycle_iter_log1p_weight * 100.0;
+                    ImGui::SetNextItemWidthForSpace(required_space);
+                    if (ImGui::SliderDouble_InvLog("Logarithmic", &log_pct, 0.0, 100.0, "%.2f%%", ImGuiSliderFlags_NoRoundToFormat | ImGuiSliderFlags_AlwaysClamp))
+                    {
+                        iter_params.cycle_iter_log1p_weight = log_pct / 100.0;
+                    }
+
+
+                    ///// Print cycle iter values
+                    ///{
+                    ///    if (cycle_iter_dynamic_limit)
+                    ///        ImGui::Text("raw_cycle_iters = %.1f", raw_cycle_iters);
+                    ///
+                    ///    double log_cycle_iters = Math::linear_log1p_lerp(raw_cycle_iters, cycle_iter_log1p_weight);
+                    ///    ImGui::Text("log_cycle_iters = %.1f", log_cycle_iters);
+                    ///}
+                }
+
+                ImGui::Spacing();
+                ImGui::SeparatorText("Histogram");
+                {
+                    float w = ImGui::GetContentRegionAvail().x;
+                    if (ImPlot::BeginPlot("Depth", ImVec2(w, 0)))
+                    {
+                        ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
+                        ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
+                        ImPlot::PlotHistogram("##iter_hist",
+                            stats.iter_histogram.data(),
+                            (int)stats.iter_histogram.size(),
+                            100, 1.0);
+                        ImPlot::EndPlot();
+                    }
+                }
+
+                ImGui::EndTabBox();
+            }
+
+            if (dist_weight > 0.0001f && ImGui::TabBox("Distance"))
+            {
+                ImGui::Spacing();
+
+                float required_width = 0.0f;
+                ImGui::IncreaseRequiredSpaceForLabel(required_width, "Sharpness");
+
+
+                // ────── Color Cycle: DIST ──────
+                {
+                    bl_scoped(dist_params);
+
+                    ImGui::Checkbox("Invert", &dist_params.cycle_dist_invert);
+
+                    ImGui::SetNextItemWidthForSpace(required_width);
+                    ImGui::SliderDouble("Dist", &dist_params.cycle_dist_value, 0.001, 1.0, "%.5f", ImGuiSliderFlags_Logarithmic);
+
+                    ImGui::SetNextItemWidthForSpace(required_width);
+                    ImGui::SliderDouble_InvLog("Sharpness", &dist_params.cycle_dist_sharpness, 0.0, 100.0, "%.4f%%",
+                        ImGuiSliderFlags_NoRoundToFormat | ImGuiSliderFlags_AlwaysClamp);
+                }
+
+                // ────── Tone: DIST ──────
+                {
+                    bl_scoped(dist_tone_params);
+
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("Tone Adjustments");
+
+                    // Contrast (disabled as it does essentially the same thing as "Dist" slider)
+                    ///ImGui::SetNextItemWidthForSpace(required_width);
+                    ///ImGui::SliderFloat("Contrast", &dist_tone_params.contrast, 0.01f, 10.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
+
+                    // Gamma
+                    float gamma_exp = 1.0f / dist_tone_params.gamma;
+                    ImGui::SetNextItemWidthForSpace(required_width);
+                    ImGui::SliderFloat("Gamma", &gamma_exp, 0.0f, 2.0f, "%.3f");
+                    dist_tone_params.gamma = 1.0f / gamma_exp;
+
+                    // Offset
+                    ImGui::SetNextItemWidthForSpace(required_width);
+                    ImGui::SliderFloat("Offset", &dist_tone_params.brightness, -1.0f, 1.0f, "%.3f");
+
+                    // Histogram
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("Histogram");
+                    {
+                        float w = ImGui::GetContentRegionAvail().x;
+                        if (ImPlot::BeginPlot("Distance", ImVec2(w, 0)))
+                        {
+                            ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
+                            ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
+                            ImPlot::PlotHistogram("##dist_hist",
+                                stats.dist_histogram.data(),
+                                (int)stats.dist_histogram.size(),
+                                100, 1.0
+                            );
+                            ImPlot::EndPlot();
+                        }
+                    }
+                }
+
+                ImGui::EndTabBox();
+            }
+
+            if (stripe_weight > 0.0001f && ImGui::TabBox("Stripe"))
+            {
+                ImGui::Spacing();
+
+                float required_width = 0.0f;
+                ImGui::IncreaseRequiredSpaceForLabel(required_width, "Frequency");
+
+                // ────── Color Cycle: STRIPE ──────
+                {
+                    bl_scoped(stripe_params);
+
+                    ImGui::SetNextItemWidthForSpace(required_width);
+                    ImGui::SliderFloat("Frequency", &stripe_params.freq, 1.0f, 100.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+
+                    ImGui::SetNextItemWidthForSpace(required_width);
+                    ImGui::SliderAngle("Phase", &stripe_params.phase, 0.0f, Math::FPI * 2.0f, 0, ImGuiSliderFlags_AlwaysClamp);
+                }
+
+                // ────── Tone: STRIPE ──────
+                {
+                    bl_scoped(stripe_tone_params);
+
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("Tone Adjustments");
+
+                    // Contrast
+                    ImGui::SetNextItemWidthForSpace(required_width);
+                    ImGui::SliderFloat("Contrast", &stripe_tone_params.contrast, 0.01f, 10.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
+
+                    // Gamma
+                    float gamma_exp = 1.0f / stripe_tone_params.gamma;
+                    ImGui::SetNextItemWidthForSpace(required_width);
+                    ImGui::SliderFloat("Gamma", &gamma_exp, 0.0f, 2.0f, "%.3f");
+                    stripe_tone_params.gamma = 1.0f / gamma_exp;
+
+                    // Offset
+                    ImGui::SetNextItemWidthForSpace(required_width);
+                    ImGui::SliderFloat("Offset", &stripe_tone_params.brightness, -1.0f, 1.0f, "%.3f");
+
+                    // Histogram
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("Histogram");
+                    {
+                        ///ImGui::Text("Mean STRIPE: %.6f", stats.field_info.mean_stripe);
+                        float w = ImGui::GetContentRegionAvail().x;
+                        if (ImPlot::BeginPlot("Stripe", ImVec2(w, 0)))
+                        {
+                            ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
+                            ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
+                            ImPlot::PlotHistogram("##stripe_hist",
+                                stats.stripe_histogram.data(),
+                                (int)stats.stripe_histogram.size(),
+                                100, 1.0
+                            );
+                            ImPlot::EndPlot();
+                        }
+                    }
+                }
+
+                ImGui::EndTabBox();
+            }
+
+            ImGui::EndTabBar();
+        }
     }
 }
 void Mandelbrot_Scene::UI::populateGradientShiftOptions()
 {
-    if (ImGui::Section("Gradient Offset + Animation", true))
+    if (ImGui::CollapsingHeaderBox("Gradient Offset + Animation", false))
     {
         // Shift
-        bl_pull(gradient_shifted); // Recalculated in viewportProcess, no need to push
-        bl_pull(gradient);
-
+        bl_view(gradient);
+        bl_pull(gradient_shifted); // no need to push (calculated already in viewportProcess)
         bl_scoped(hue_shift, gradient_shift);
 
         // Animation
@@ -688,11 +874,13 @@ void Mandelbrot_Scene::UI::populateGradientShiftOptions()
         ImGui::Spacing();
         ImGui::Text("Live preview");
         ImGui::GradientButton(&gradient_shifted, platform()->dpr());
+
+        ImGui::EndCollapsingHeaderBox();
     }
 }
 void Mandelbrot_Scene::UI::populateGradientPicker()
 {
-    if (ImGui::Section("Base Color Gradient", true, 2.0f))
+    if (ImGui::CollapsingHeaderBox("Base Color Gradient", false))
     {
         bl_scoped(gradient);
 
@@ -704,10 +892,12 @@ void Mandelbrot_Scene::UI::populateGradientPicker()
             selecting_template = -1;
         }
 
+        #if MANDEL_DEV_MODE
         if (ImGui::Button("Copy gradient C++ code"))
         {
             ImGui::SetClipboardText(gradient.to_cpp_marks().c_str());
         }
+        #endif
 
         ImGui::Dummy(scale_size(0, 8));
 
@@ -716,15 +906,12 @@ void Mandelbrot_Scene::UI::populateGradientPicker()
             platform()->ui_scale_factor(2.0f)))
         {
             // Shift
-            bl_pull(gradient_shifted);
-            bl_pull(hue_shift);
-            bl_pull(gradient_shift);
-
-            transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
+            ///bl_pull(gradient_shifted, hue_shift, gradient_shift);
+            ///transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
         }
 
         ImGui::Spacing();
-
+        ImGui::EndCollapsingHeaderBox();
     }
 }
 
@@ -817,64 +1004,124 @@ void Mandelbrot_Scene::UI::populateSplinesDev()
     if (ImGui::Button("Copy base zoom spline")) ImGui::SetClipboardText(tween_base_zoom_spline.serialize(SplineSerializationMode::CPP_ARRAY, 3).c_str());
 }
 
-
-void Mandelbrot_Scene::UI::populateMouseOrbit()
+struct Limits2D
 {
-    using cplx = cplx<f64>;
+    double xmin, xmax;
+    double ymin, ymax;
+};
 
-    bl_pull(stats);
-    auto [x0, y0] = stats.hovered_field_world_pos;
+Limits2D computeTaperedFitLimits(
+    const std::vector<double>& xs,
+    const std::vector<double>& ys,
+    double hard_frac = 0.70,
+    double pad_frac = 0.3)
+{
+    const size_t n = xs.size();
+    if (n == 0) return { -1, 1, -1, 1 };
 
-    std::vector<f64> xs, ys;
+    size_t k = (size_t)std::floor(hard_frac * (double)n);
+    if (k < 1) k = 1;
+    if (k > n) k = n;
 
-    cplx z{ 0.0, 0.0 }; 
-    cplx c{ x0, y0 };
+    // hard include up to hard_frac
+    double base_xmin = xs[0], base_xmax = xs[0];
+    double base_ymin = ys[0], base_ymax = ys[0];
+    for (size_t i = 0; i < k; ++i) {
+        base_xmin = std::min(base_xmin, xs[i]);
+        base_xmax = std::max(base_xmax, xs[i]);
+        base_ymin = std::min(base_ymin, ys[i]);
+        base_ymax = std::max(base_ymax, ys[i]);
+    }
 
-    xs.push_back(0.0);
-    ys.push_back(0.0);
-    for (int i = 0; i < 1000; i++)
+    double xmin = base_xmin, xmax = base_xmax;
+    double ymin = base_ymin, ymax = base_ymax;
+
+    // tapered influence
+    if (k < n) 
     {
-        cplx p1 = z;
-        cplx p2 = process_z(1, z, c);
-        cplx p3 = process_z(2, z, c);
-
-        z = Math::arcLerp(1, p1, p2, p3);
-        //z = process_z(1, z, c);
-
-        xs.push_back(z.x);
-        ys.push_back(z.y);
-
-        f64 r2 = z.x * z.x + z.y * z.y;
-        if (r2 > 81)
+        const double denom = (double)(n - 1 - k);
+        for (size_t i = k; i < n; ++i) 
         {
-            break;
+            const double t = (denom > 0.0) ? (double)(i - k) / denom : 1.0;
+            const double w = 1.0 - t;
+
+            const double x = xs[i];
+            const double y = ys[i];
+
+            if (x > base_xmax) xmax = std::max(xmax, base_xmax + (x - base_xmax) * w);
+            if (x < base_xmin) xmin = std::min(xmin, base_xmin + (x - base_xmin) * w);
+
+            if (y > base_ymax) ymax = std::max(ymax, base_ymax + (y - base_ymax) * w);
+            if (y < base_ymin) ymin = std::min(ymin, base_ymin + (y - base_ymin) * w);
         }
     }
 
-    if (ImPlot::BeginPlot("Mouse orbit"))
+    // padding
+    const double dx = (xmax - xmin);
+    const double dy = (ymax - ymin);
+    const double padx = (dx > 0.0) ? dx * pad_frac : 1.0;
+    const double pady = (dy > 0.0) ? dy * pad_frac : 1.0;
+
+    xmin -= padx; xmax += padx;
+    ymin -= pady; ymax += pady;
+
+    return { xmin, xmax, ymin, ymax };
+}
+
+template<typename T>
+void computeOrbit(f128 x0, f128 y0, int iter_lim, std::vector<f64>& xs, std::vector<f64>& ys)
+{
+    using cplx = cplx<T>;
+    constexpr T escape_r = T(16.0);
+
+    cplx z{ 0.0, 0.0 };
+    cplx c{ T(x0), T(y0) };
+
+    for (int i = 0; i < iter_lim; i++)
     {
-        ImPlot::SetupAxis(ImAxis_X1, "cx", ImPlotAxisFlags_AutoFit);
-        ImPlot::SetupAxis(ImAxis_Y1, "cy", ImPlotAxisFlags_AutoFit);
-        //ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_Log10);
-        if (xs.size())
+        mandel_step(z, c);
+        xs.push_back((f64)z.x);
+        ys.push_back((f64)z.y);
+
+        T r2 = z.x * z.x + z.y * z.y;
+        if (r2 > escape_r)
+            break;
+    }
+}
+
+void Mandelbrot_Scene::UI::populateMouseOrbit()
+{
+    if (ImGui::CollapsingHeaderBox("Mouse Orbit", false))
+    {
+        bl_view(camera);
+        bl_view(stats);
+        bl_view(iter_lim);
+        bl_view(mandel_features);
+
+        ImGui::SliderDouble("Padding", &orbit_padding, 0.0, 1.0, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+
+        std::vector<f64> xs, ys;
+        xs.push_back(0.0);
+        ys.push_back(0.0);
+
+        auto [x0, y0] = stats.hovered_field_world_pos;
+
+        FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
+        table_invoke(dispatch_table(computeOrbit, x0, y0, iter_lim, xs, ys), float_type);
+
+        if (ImPlot::BeginPlot("Mouse orbit"))
         {
-            ImPlot::PlotLine("##mouse_plot", xs.data(), ys.data(), (int)xs.size());
-
-            /*double max_depth = (--stats.depth_histogram.end())->first;
-            if (stats.hovered_field_pixel.depth < max_depth)
+            auto lims = computeTaperedFitLimits(xs, ys, 0.8, orbit_padding);
+            ImPlot::SetupAxisLimits(ImAxis_X1, lims.xmin, lims.xmax, ImGuiCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, lims.ymin, lims.ymax, ImGuiCond_Always);
+            if (xs.size())
             {
-
-                auto nearest_it = stats.depth_histogram.lower_bound((int)stats.hovered_field_pixel.depth);
-                if (nearest_it != stats.depth_histogram.end())
-                {
-                    double px = nearest_it->first;
-                    double py = nearest_it->second;
-                    ImPlot::PlotInfLines("##depth_mark", &px, 1); // vertical line at X = mark
-                    ImPlot::PlotScatter("##depth_point", &px, &py, 1);
-                }
-            }*/
+                ImPlot::PlotLine("##mouse_plot", xs.data(), ys.data(), (int)xs.size());
+            }
+            ImPlot::EndPlot();
         }
-        ImPlot::EndPlot();
+
+        ImGui::EndCollapsingHeaderBox();
     }
 }
 

@@ -1,5 +1,7 @@
 ﻿#include "Mandelbrot.h"
 
+#include "compute.h"
+
 SIM_BEG;
 
 void Mandelbrot_Scene::updateAnimation()
@@ -97,12 +99,6 @@ void Mandelbrot_Scene::updateCameraView()
     }
 }
 
-template<typename T>
-void updateNormalizeFieldShape(NormalizationField& norm_field, const CameraInfo &camera, double normalize_field_scale)
-{
-    norm_field.updateField<T>(camera, normalize_field_scale);
-}
-
 void Mandelbrot_Scene::updateFieldSizes(Viewport* ctx)
 {
     int iw = (int)(ceil(ctx->width() / 9)) * 9;
@@ -128,7 +124,7 @@ void Mandelbrot_Scene::updateFieldSizes(Viewport* ctx)
     bool changed_normalization_field_shape = false;
     if (first_frame || Changed(normalize_field_quality) || Changed(normalize_field_exponent))
     {
-        double spacing = (1.0 / normalize_field_quality) / 200.0;
+        double spacing = (1.0 / normalize_field_quality) / 500.0;
         norm_field.setShape(spacing, normalize_field_exponent);
         changed_normalization_field_shape = true;
     }
@@ -138,10 +134,15 @@ void Mandelbrot_Scene::updateFieldSizes(Viewport* ctx)
         Changed(world_quad) ||
         Changed(normalize_field_scale))
     {
-        FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.zoom<f128>());
-        table_invoke(build_table(updateNormalizeFieldShape, [&], norm_field, camera, normalize_field_scale), float_type);
+        FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
+        table_invoke(dispatch_table_targ(norm_field, NormalizationField::updateField, camera, normalize_field_scale), float_type);
     }
 
+    //if (Changed(world_quad))
+    //{
+    //    FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
+    //    table_invoke(dispatch_table_targ(norm_field_zoom_out, NormalizationField::updateField, camera, normalize_field_scale), float_type);
+    //}
 }
 
 void Mandelbrot_Scene::updateEnabledKernelFeatures()
@@ -149,12 +150,12 @@ void Mandelbrot_Scene::updateEnabledKernelFeatures()
     bool mandel_changed = mandelChanged();
 
     constexpr double eps = std::numeric_limits<double>::epsilon();
-    MandelKernelFeatures old_smoothing = mandel_features;
-    MandelKernelFeatures new_smoothing = MandelKernelFeatures::NONE;
+    KernelFeatures old_smoothing = mandel_features;
+    KernelFeatures new_smoothing = KernelFeatures::NONE;
 
-    if (iter_weight > eps)   new_smoothing |= MandelKernelFeatures::ITER;
-    if (dist_weight > eps)   new_smoothing |= MandelKernelFeatures::DIST;
-    if (stripe_weight > eps) new_smoothing |= MandelKernelFeatures::STRIPES;
+    if (iter_weight > eps)   new_smoothing |= KernelFeatures::ITER;
+    if (dist_weight > eps)   new_smoothing |= KernelFeatures::DIST;
+    if (stripe_weight > eps) new_smoothing |= KernelFeatures::STRIPES;
 
     bool force_upgrade       = (bool)( new_smoothing & ~old_smoothing);
     bool downgrade_on_change = (bool)(~new_smoothing &  old_smoothing);
@@ -188,6 +189,13 @@ void Mandelbrot_Scene::updateActivePhaseAndField()
         norm_field.clearFinalFlags();
 
         compute_t0 = std::chrono::steady_clock::now();
+
+        timer_begin_group(ITER);
+        timer_begin_group(DIST);
+        timer_begin_group(STRIPE);
+        timer_begin_group(ESCAPE);
+        timer_begin_group(REBASE);
+        timer_begin_group(NORM_FIELD);
     }
 
     // ────── set pending bitmap & pending field ──────
@@ -226,22 +234,27 @@ bool Mandelbrot_Scene::processCompute()
         //DQuad quad = ctx->worldQuad();
         //bool x_axis_visible = quad.intersects({ {quad.minX(), 0}, {quad.maxX(), 0} });
 
-        //if (kernel_mode == MandelKernelMode::AUTO)
+        //if (kernel_mode == KernelMode::AUTO)
         //    kernel_mode = (float_type >= FloatingPointType::F128) ? 
-        //else if (kernel_mode == MandelKernelMode::FULL)
+        //else if (kernel_mode == KernelMode::FULL)
         //    kernel_mode = false;
         // 
         // Run appropriate kernel for given settings
-        MandelKernelMode deduced_kernel_mode = kernel_mode;
+        KernelMode deduced_kernel_mode = kernel_mode;
 
-        // If 'AUTO', use perturbation at f128 depths, otherwise no performance gain
-        if (deduced_kernel_mode == MandelKernelMode::AUTO)
-            deduced_kernel_mode = (float_type >= FloatingPointType::F128) ? MandelKernelMode::PERTURBATION_SIMD_UNROLLED : MandelKernelMode::NO_PERTURBATION;
+        // if "AUTO" => use perturbation at f128 depths
+        // otherwise no performance gain => use simple kernel
+        if (deduced_kernel_mode == KernelMode::AUTO)
+            deduced_kernel_mode = (float_type >= FloatingPointType::F128) ? KernelMode::PERTURBATION_SIMD_UNROLLED : KernelMode::NO_PERTURBATION;
 
-        finished_compute = frame_complete = table_invoke(
-            build_table(mandelbrot_perturbation, [&], pending_bmp, pending_field, norm_field, iter_lim, timeout, P, stripe_params),
-            float_type, mandel_features, deduced_kernel_mode
-        );
+        finished_compute = frame_complete = 
+            table_invoke(dispatch_table(compute_mandelbrot, timeout), float_type, mandel_features, deduced_kernel_mode);
+
+
+        //finished_compute = frame_complete = table_invoke(
+        //    build_table(mandelbrot_perturbation, [&], pending_bmp, pending_field, active_field, norm_field, normalize_field_precision, iter_lim, timeout, P, stripe_params),
+        //    float_type, mandel_features, deduced_kernel_mode
+        //);
     }
     //else
     //{
@@ -264,7 +277,6 @@ bool Mandelbrot_Scene::processCompute()
             case 0:
             {
                 /// finished first 9x9 low-res phase, forward computed pixels to 3x3 phase
-                //field_3x3.setAllDepth(-1.0);
                 int interior_c = 0;
                 bmp_9x9.forEachPixel([&](int x, int y)
                 {
@@ -299,7 +311,6 @@ bool Mandelbrot_Scene::processCompute()
             case 1:
             {
                 /// finished second 3x3 low-res phase, forward computed pixels to final 1x1 phase
-                //field_1x1.setAllDepth(-1.0);
                 int interior_c = 0;
 
                 bmp_3x3.forEachPixel([&](int x, int y)
@@ -344,6 +355,14 @@ bool Mandelbrot_Scene::processCompute()
                 captureFrame(true);
                 final_frame_complete = true;
 
+                //timer_end_group(ITER);
+                //timer_end_group(DIST);
+                //timer_end_group(STRIPE);
+                //timer_end_group(ESCAPE);
+                //timer_end_group(REBASE);
+                timer_end_group(NORM_FIELD);
+                blPrint("\n");
+
                 auto elapsed = std::chrono::steady_clock::now() - compute_t0;
                 double dt = std::chrono::duration<double, std::milli>(elapsed).count();
                 dt_avg = timer_ma.push(dt);
@@ -359,23 +378,17 @@ bool Mandelbrot_Scene::processCompute()
 
 bool Mandelbrot_Scene::mandelChanged()
 {
-    //bool stripe_changed = Changed(stripe_weight);
-
     bool view_changed            = Changed(world_quad);
-    bool quality_opts_changed    = Changed(quality, dynamic_iter_lim, maxdepth_optimize, maxdepth_show_optimized);
-    bool compute_opts_changed    = Changed(stripe_params);
-    //bool splines_changed         = Changed(x_spline.hash(), y_spline.hash());
-    //bool flatten_changed         = Changed(flatten, show_period2_bulb, cardioid_lerp_amount);
+    bool quality_opts_changed    = Changed(quality, dynamic_iter_lim, interior_forwarding, maxdepth_show_optimized);
+    bool compute_opts_changed    = Changed(stripe_params.freq);
     bool features_changed        = Changed(mandel_features);
-    bool normalize_field_changed = Changed(normalize_field_quality) || Changed(normalize_field_exponent) || Changed(normalize_field_scale);
+    bool normalize_field_changed = Changed(normalize_field_quality, normalize_field_exponent, normalize_field_scale, normalize_field_precision);
     bool kernel_mode_changed     = Changed(kernel_mode);
     return (
         first_frame ||
         view_changed || 
         quality_opts_changed || 
-        compute_opts_changed || 
-        //splines_changed || 
-        //flatten_changed || 
+        compute_opts_changed ||
         features_changed || 
         normalize_field_changed ||
         kernel_mode_changed
@@ -387,10 +400,10 @@ bool Mandelbrot_Scene::shadingFormulaChanged()
     bool shade_formula_changed   = Changed(shade_formula);
     bool weights_changed         = Changed(iter_weight, dist_weight, stripe_weight);
     bool cycle_iter_opts_changed = Changed(iter_params);
-    bool cycle_dist_opts_changed = Changed(dist_params);
-    return (shade_formula_changed || weights_changed || cycle_iter_opts_changed || cycle_dist_opts_changed);
+    bool cycle_dist_opts_changed = Changed(dist_params, dist_tone_params);
+    bool cycle_stripe_opts_changed = Changed(stripe_params.phase, stripe_tone_params);
+    return (shade_formula_changed || weights_changed || cycle_iter_opts_changed || cycle_dist_opts_changed || cycle_stripe_opts_changed);
 }
-
 
 
 SIM_END;

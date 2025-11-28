@@ -61,7 +61,15 @@ std::string MandelState::serialize() const
             // STRIPE
             info["v"] = (int)stripe_params.freq;
             info["j"] = JSON::markCleanFloat(stripe_params.phase, 4);
-            info["c"] = JSON::markCleanFloat(stripe_params.contrast, 3);
+
+            // DIST tone
+            info["E"] = JSON::markCleanFloat(dist_tone_params.brightness, 3);
+            info["K"] = JSON::markCleanFloat(dist_tone_params.gamma, 3);
+
+            // STRIPE tone
+            info["c"] = JSON::markCleanFloat(stripe_tone_params.contrast, 3);
+            info["e"] = JSON::markCleanFloat(stripe_tone_params.brightness, 3);
+            info["k"] = JSON::markCleanFloat(stripe_tone_params.gamma, 3);
         }
 
         // Shift
@@ -86,6 +94,8 @@ std::string MandelState::serialize() const
         //info["B"] = y_spline.serialize(SplineSerializationMode::COMPRESS_SHORTEST);
     }
 
+    /// Generate JSON with entries containing "CLEANFLOAT(...)" strings, then strip it away leaving just the raw floats
+    /// Guaranteed to contain no rounding errors
     std::string raw_json = JSON::unmarkCleanFloats(info.dump());
 
     if constexpr (COMPRESS_CONFIG)
@@ -117,9 +127,9 @@ bool MandelState::_deserialize(std::string_view sv, bool COMPRESS_CONFIG)
         uncompressed = txt;
     }
 
+    blPrint() << "uncleaned: " << uncompressed;
     uncompressed = JSON::json_add_key_quotes(uncompressed);
     uncompressed = JSON::json_add_leading_zeros(uncompressed);
-
     blPrint() << "decoded: " << uncompressed;
 
     nlohmann::json info = nlohmann::json::parse(uncompressed, nullptr, false);
@@ -187,7 +197,15 @@ bool MandelState::_deserialize(std::string_view sv, bool COMPRESS_CONFIG)
             // STRIPE
             stripe_params.freq = info.value("v", 0.0f);
             stripe_params.phase = info.value("j", 0.0f);
-            stripe_params.contrast = info.value("c", 3.0f);
+
+            // DIST tone
+            dist_tone_params.brightness = info.value("E", 0.0f);
+            dist_tone_params.gamma = info.value("K", 1.0f);
+
+            // STRIPE tone
+            stripe_tone_params.contrast = info.value("c", 1.0f);
+            stripe_tone_params.brightness = info.value("e", 0.0f);
+            stripe_tone_params.gamma = info.value("k", 1.0f);
         }
 
         // Shift
