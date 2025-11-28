@@ -35,8 +35,6 @@ void Mandelbrot_Scene::UI::sidebar()
     if (tweening)
         ImGui::BeginDisabled();
 
-    // _ChatGPT_ [test githook]
-
     populateSavingLoading();
     populateCameraView();
     populateExamples();
