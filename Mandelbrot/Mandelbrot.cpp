@@ -220,6 +220,9 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
 
 void Mandelbrot_Scene::onEvent(Event e)
 {
+    if (!this->ownsEvent(e))
+        return;
+
     #ifdef BL_RELEASE
     // don't permit world navigation while tweening
     if (tweening || isRecording())
