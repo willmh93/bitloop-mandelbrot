@@ -909,7 +909,7 @@ void Mandelbrot_Scene::UI::populateGradientPicker()
 
         if (ImGui::GradientEditor(&gradient,
             platform()->dpr(),
-            platform()->dpr() * 2.0f))
+            platform()->dpr() * platform()->thumbScale()))
         {
             // Shift
             ///bl_pull(gradient_shifted, hue_shift, gradient_shift);

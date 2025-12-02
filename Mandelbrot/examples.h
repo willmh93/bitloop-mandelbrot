@@ -18,41 +18,31 @@ using namespace bl;
 //};
 
 
+
 struct MandelExampleID
 {
     const char* category = nullptr;
     const char* name = nullptr;
 };
 
-
-struct MandelExampleCmp
+struct MandelExampleLess
 {
-    bool operator()(const MandelExampleID& x, const MandelExampleID& y) const
+    static int cmp(const char* a, const char* b) noexcept
     {
-        auto eq = [](const char* s1, const char* s2) {
-            if (s1 == s2) return true;
-            if (!s1 || !s2) return false;
-            return std::strcmp(s1, s2) == 0;
-        };
-        return eq(x.category, y.category) && eq(x.name, y.name);
+        if (a == b) return 0;
+        if (!a) return -1;
+        if (!b) return 1;
+        return std::strcmp(a, b);
+    }
+
+    bool operator()(const MandelExampleID& x, const MandelExampleID& y) const noexcept
+    {
+        if (int c = cmp(x.category, y.category); c != 0) return c < 0;
+        return cmp(x.name, y.name) < 0;
     }
 };
 
-struct MandelExampleHash
-{
-    size_t operator()(const MandelExampleID& k) const
-    {
-        auto sv = [](const char* s) -> std::string_view {
-            return s ? std::string_view{ s } : std::string_view{};
-        };
-        size_t h1 = std::hash<std::string_view>{}(sv(k.category));
-        size_t h2 = std::hash<std::string_view>{}(sv(k.name));
-
-        return h1 ^ (h2 + 0x9e3779b97f4a7c15ull + (h1 << 6) + (h1 >> 2));
-    }
-};
-
-using MandelExampleMap = std::unordered_map<MandelExampleID, std::string, MandelExampleHash, MandelExampleCmp>;
+using MandelExampleMap = std::map<MandelExampleID, std::string, MandelExampleLess>;
 
 //inline std::map<std::string, std::string> generateMandelPresets()
 inline MandelExampleMap generateMandelPresets()
