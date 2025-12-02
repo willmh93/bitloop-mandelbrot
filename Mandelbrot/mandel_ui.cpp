@@ -44,8 +44,8 @@ void Mandelbrot_Scene::UI::sidebar()
     populateGradientPicker();
     populateStats();
     //populateExperimental();
-
-    populateMouseOrbit();
+    if (!platform()->is_mobile())
+        populateMouseOrbit();
 
     if (tweening)
         ImGui::EndDisabled();
@@ -665,22 +665,24 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
                     ///}
                 }
 
-                ImGui::Spacing();
-                ImGui::SeparatorText("Histogram");
+                if (!platform()->is_mobile())
                 {
-                    float w = ImGui::GetContentRegionAvail().x;
-                    if (ImPlot::BeginPlot("Depth", ImVec2(w, 0)))
+                    ImGui::Spacing();
+                    ImGui::SeparatorText("Histogram");
                     {
-                        ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
-                        ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
-                        ImPlot::PlotHistogram("##iter_hist",
-                            stats.iter_histogram.data(),
-                            (int)stats.iter_histogram.size(),
-                            100, 1.0);
-                        ImPlot::EndPlot();
+                        float w = ImGui::GetContentRegionAvail().x;
+                        if (ImPlot::BeginPlot("Depth", ImVec2(w, 0)))
+                        {
+                            ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
+                            ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
+                            ImPlot::PlotHistogram("##iter_hist",
+                                stats.iter_histogram.data(),
+                                (int)stats.iter_histogram.size(),
+                                100, 1.0);
+                            ImPlot::EndPlot();
+                        }
                     }
                 }
-
                 ImGui::EndTabBox();
             }
 
@@ -727,21 +729,24 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
                     ImGui::SetNextItemWidthForSpace(required_width);
                     ImGui::SliderFloat("Offset", &dist_tone_params.brightness, -1.0f, 1.0f, "%.3f");
 
-                    // Histogram
-                    ImGui::Spacing();
-                    ImGui::SeparatorText("Histogram");
+                    if (!platform()->is_mobile())
                     {
-                        float w = ImGui::GetContentRegionAvail().x;
-                        if (ImPlot::BeginPlot("Distance", ImVec2(w, 0)))
+                        // Histogram
+                        ImGui::Spacing();
+                        ImGui::SeparatorText("Histogram");
                         {
-                            ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
-                            ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
-                            ImPlot::PlotHistogram("##dist_hist",
-                                stats.dist_histogram.data(),
-                                (int)stats.dist_histogram.size(),
-                                100, 1.0
-                            );
-                            ImPlot::EndPlot();
+                            float w = ImGui::GetContentRegionAvail().x;
+                            if (ImPlot::BeginPlot("Distance", ImVec2(w, 0)))
+                            {
+                                ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
+                                ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
+                                ImPlot::PlotHistogram("##dist_hist",
+                                    stats.dist_histogram.data(),
+                                    (int)stats.dist_histogram.size(),
+                                    100, 1.0
+                                );
+                                ImPlot::EndPlot();
+                            }
                         }
                     }
                 }
@@ -788,22 +793,25 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
                     ImGui::SetNextItemWidthForSpace(required_width);
                     ImGui::SliderFloat("Offset", &stripe_tone_params.brightness, -1.0f, 1.0f, "%.3f");
 
-                    // Histogram
-                    ImGui::Spacing();
-                    ImGui::SeparatorText("Histogram");
+                    if (!platform()->is_mobile())
                     {
-                        ///ImGui::Text("Mean STRIPE: %.6f", stats.field_info.mean_stripe);
-                        float w = ImGui::GetContentRegionAvail().x;
-                        if (ImPlot::BeginPlot("Stripe", ImVec2(w, 0)))
+                        // Histogram
+                        ImGui::Spacing();
+                        ImGui::SeparatorText("Histogram");
                         {
-                            ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
-                            ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
-                            ImPlot::PlotHistogram("##stripe_hist",
-                                stats.stripe_histogram.data(),
-                                (int)stats.stripe_histogram.size(),
-                                100, 1.0
-                            );
-                            ImPlot::EndPlot();
+                            ///ImGui::Text("Mean STRIPE: %.6f", stats.field_info.mean_stripe);
+                            float w = ImGui::GetContentRegionAvail().x;
+                            if (ImPlot::BeginPlot("Stripe", ImVec2(w, 0)))
+                            {
+                                ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
+                                ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
+                                ImPlot::PlotHistogram("##stripe_hist",
+                                    stats.stripe_histogram.data(),
+                                    (int)stats.stripe_histogram.size(),
+                                    100, 1.0
+                                );
+                                ImPlot::EndPlot();
+                            }
                         }
                     }
                 }
@@ -900,8 +908,8 @@ void Mandelbrot_Scene::UI::populateGradientPicker()
         ImGui::Dummy(scale_size(0, 8));
 
         if (ImGui::GradientEditor(&gradient,
-            platform()->ui_scale_factor(),
-            platform()->ui_scale_factor(2.0f)))
+            platform()->dpr(),
+            platform()->dpr() * 2.0f))
         {
             // Shift
             ///bl_pull(gradient_shifted, hue_shift, gradient_shift);
