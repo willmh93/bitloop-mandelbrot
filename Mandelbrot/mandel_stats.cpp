@@ -11,12 +11,10 @@ void SetupTable2(float col1_w)
 
 static void TableRowText2(const char* label, const char* fmt, ...)
 {
-    // _ChatGPT_ Label
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     ImGui::TextUnformatted(label);
 
-    // _ChatGPT_ Value
     ImGui::TableSetColumnIndex(1);
     va_list args;
     va_start(args, fmt);
@@ -94,6 +92,7 @@ void Mandelbrot_Scene::UI::populateStats()
         }
 
         // --- mouse info ---
+        if (!platform()->is_mobile())
         {
             ImGui::BeginLabelledBox("Mouse info");
             if (ImGui::BeginTable("##hover_stats", 2, flags, ImVec2(-FLT_MIN, 0.0f)))
@@ -143,10 +142,12 @@ void Mandelbrot_Scene::UI::populateStats()
             {
                 SetupTable2(col1_w);
                 
-                auto format_zoom = [](f128 f) -> std::string { return to_string(f, 5, false, true, false).c_str(); };
+                auto format_zoom = [](f128 f) -> std::string { return to_string(f, 5, false, true, true).c_str(); };
                 TableRowText2("Zoom",            "%s",   format_zoom(camera.relativeZoom<f128>()).c_str());
+                #if MANDEL_DEV_MODE
                 TableRowText2("Height",          "%.4f", (f64)toHeight(camera.relativeZoom<f128>()));
                 TableRowText2("Normalized Zoom", "%.4f", (f64)toNormalizedZoom(camera.relativeZoom<f128>()));
+                #endif
 
                 ImGui::EndTable();
             }
@@ -154,6 +155,7 @@ void Mandelbrot_Scene::UI::populateStats()
         }
 
         // --- capture info ---
+        if (!platform()->is_mobile())
         {
             ImGui::BeginLabelledBox("Capture info");
             if (ImGui::BeginTable("##capture_stats", 2, flags, ImVec2(-FLT_MIN, 0.0f)))

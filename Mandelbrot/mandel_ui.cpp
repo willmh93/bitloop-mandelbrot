@@ -16,12 +16,6 @@ std::string dataToURL(std::string data_buf)
     #endif
 }
 
-// Call once per frame where you want the button to appear.
-// Returns true if it toggled.
-// Example:
-//   static bool is_fullscreen = false;
-//   DrawFullscreenOverlayButton(&is_fullscreen, ImVec2(24, 24), 30.0f, 0.66f);
-
 void Mandelbrot_Scene::UI::init()
 {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -456,42 +450,49 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
             ImGui::PopID();
             quality = quality_pct / 100.0;
 
-            ImGui::SameLine();
-            ImGui::Text("= %d Iters", finalIterLimit(camera, quality, dynamic_iter_lim, tweening));
+            ImGui::Text("  = %d Iters", finalIterLimit(camera, quality, dynamic_iter_lim, tweening));
         }
         else
-            ImGui::DragDouble("Max Iterations", &quality, 1000.0, 1.0, 1000000.0, "%.0f", ImGuiSliderFlags_Logarithmic);
-
-        bl_scoped(interior_forwarding);
-        bl_scoped(interior_phases_contract_expand);
-        bl_scoped(maxdepth_show_optimized);
-
-        ImGui::Spacing(); ImGui::Spacing();
-        ImGui::Text("Interior forwarding");
-        if (ImGui::Combo("###MandelInteriorForwarding", &interior_forwarding, MandelMaxDepthOptimizationNames, (int)MandelInteriorForwarding::COUNT))
         {
-            switch ((MandelInteriorForwarding)interior_forwarding)
-            {
-            case MandelInteriorForwarding::SLOWEST: interior_phases_contract_expand = { 10, 0, 10, 0 }; break;
-            case MandelInteriorForwarding::SLOW:    interior_phases_contract_expand = { 6, 2, 8, 2 };   break;
-            case MandelInteriorForwarding::MEDIUM:  interior_phases_contract_expand = { 5, 3, 7, 3 };   break;
-            case MandelInteriorForwarding::FAST:    interior_phases_contract_expand = { 1, 0, 1, 0 };   break;
-            default: break;
-            }
+            ImGui::DragDouble("###Quality", &quality, 1000.0, 1.0, 1000000.0, "%.0f", ImGuiSliderFlags_Logarithmic);
+            ImGui::Text("  = %d Iters", finalIterLimit(camera, quality, dynamic_iter_lim, tweening));
         }
 
-        ImGui::Checkbox("Highlight optimized regions", &maxdepth_show_optimized);
-        ImGui::Spacing(); ImGui::Spacing();
+        if (!platform()->is_mobile())
+        {
+            bl_scoped(interior_forwarding);
+            bl_scoped(interior_phases_contract_expand);
+            bl_scoped(maxdepth_show_optimized);
 
-        bl_scoped(kernel_mode);
-        ImGui::Text("Kernel Mode");
-        ///--------------------------------------------------------------------------------------------------------------------------
-        ImGui::RadioButton("Auto",                            &(int&)kernel_mode, (int)KernelMode::AUTO);
-        ImGui::RadioButton("No Perturbation",                 &(int&)kernel_mode, (int)KernelMode::NO_PERTURBATION);
-        ImGui::RadioButton("Perturbation (no SIMD)",          &(int&)kernel_mode, (int)KernelMode::PERTURBATION);
-        ImGui::RadioButton("Perturbation (SIMD)",             &(int&)kernel_mode, (int)KernelMode::PERTURBATION_SIMD);
-        ImGui::RadioButton("Perturbation (SIMD, unrolled)",   &(int&)kernel_mode, (int)KernelMode::PERTURBATION_SIMD_UNROLLED);
-        ///--------------------------------------------------------------------------------------------------------------------------
+            ImGui::Spacing(); ImGui::Spacing();
+            ImGui::Text("Interior forwarding");
+            if (ImGui::Combo("###MandelInteriorForwarding", &interior_forwarding, MandelMaxDepthOptimizationNames, (int)MandelInteriorForwarding::COUNT))
+            {
+                switch ((MandelInteriorForwarding)interior_forwarding)
+                {
+                case MandelInteriorForwarding::SLOWEST: interior_phases_contract_expand = { 10, 0, 10, 0 }; break;
+                case MandelInteriorForwarding::SLOW:    interior_phases_contract_expand = { 6, 2, 8, 2 };   break;
+                case MandelInteriorForwarding::MEDIUM:  interior_phases_contract_expand = { 5, 3, 7, 3 };   break;
+                case MandelInteriorForwarding::FAST:    interior_phases_contract_expand = { 1, 0, 1, 0 };   break;
+                default: break;
+                }
+            }
+
+            ImGui::Checkbox("Highlight optimized regions", &maxdepth_show_optimized);
+            ImGui::Spacing(); ImGui::Spacing();
+
+            #if MANDEL_DEV_MODE
+            bl_scoped(kernel_mode);
+            ImGui::Text("Kernel Mode");
+            ///--------------------------------------------------------------------------------------------------------------------------
+            ImGui::RadioButton("Auto", &(int&)kernel_mode, (int)KernelMode::AUTO);
+            ImGui::RadioButton("No Perturbation", &(int&)kernel_mode, (int)KernelMode::NO_PERTURBATION);
+            ImGui::RadioButton("Perturbation (no SIMD)", &(int&)kernel_mode, (int)KernelMode::PERTURBATION);
+            ImGui::RadioButton("Perturbation (SIMD)", &(int&)kernel_mode, (int)KernelMode::PERTURBATION_SIMD);
+            ImGui::RadioButton("Perturbation (SIMD, unrolled)", &(int&)kernel_mode, (int)KernelMode::PERTURBATION_SIMD_UNROLLED);
+            ///--------------------------------------------------------------------------------------------------------------------------
+            #endif
+        }
 
         ImGui::EndCollapsingHeaderBox();
     }
@@ -510,16 +511,16 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
         ImGui::Checkbox("Preview", &preview_normalization_field);
 
         ImGui::RevertableSliderDouble("Scale", &normalize_field_scale, &init_normalize_field_scale, 0.5, 4.0, "%.2f");
-        ImGui::SetItemTooltip("Controls size of normalization field.\n(samples outside of viewport must be calculated)");
+        ImGui::SetItemTooltip("Radius of normalization field");
 
         ImGui::RevertableSliderDouble("Quality", &normalize_field_quality, &init_normalize_field_quality, 0.1, 1.0, "%.2f");
-        ImGui::SetItemTooltip("Controls the number of samples taken.\n(Keep low for better performance, especially if Scale is high)");
+        ImGui::SetItemTooltip("Controls the number of samples taken");
 
         ImGui::RevertableSliderDouble("Exponent", &normalize_field_exponent, &init_normalize_field_exponent, 1.0, 4.0, "%.2f");
         ImGui::SetItemTooltip("Higher = Sample more heavily near camera center.\n(useful for zoom animations, otherwise keep at 1.0)");
         
-        ImGui::RevertableSliderDouble("Precision", &normalize_field_precision, &normalize_field_precision, 0.0, 1.0, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::SetItemTooltip("0 = Always reuse nearest cached pixel where possible (faster)\n1 = Always recalculate at exact sample coordinate (reduces flicker)");
+        ImGui::RevertableSliderDouble("Accuracy", &normalize_field_precision, &normalize_field_precision, 0.0, 1.0, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SetItemTooltip("0 = Reuse nearest cached pixel where possible (fast)\n1 = Force calculate at exact sample coordinate (less flicker)");
 
         if (normalize_field_precision < 0.2)
         {
@@ -614,7 +615,6 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
                         else
                             iter_params.cycle_iter_value *= iter_lim;
                     }
-                    ImGui::SameLine(); ImGui::Dummy(ImVec2(10.0f, 0.0f)); ImGui::SameLine();
 
                     /// todo
                     //bl_scoped(use_smoothing); 

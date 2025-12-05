@@ -81,7 +81,7 @@ void Mandelbrot_Scene::updateCameraView()
         }
         else
         {
-            f128 threshold = camera.relativeZoom<f128>() / 1000.0;
+            f128 threshold = 0.001 / camera.relativeZoom<f128>();
             if (camera_vel_pos.mag() > threshold)
                 camera.setPos(camera.pos<f128>() + camera_vel_pos);
             else

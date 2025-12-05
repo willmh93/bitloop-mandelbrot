@@ -1,10 +1,10 @@
 #pragma once
 
 #define BL_TIMERS_ENABLED                           0
-#define BL_SIMD_FORCE_SCALAR                        1
+#define BL_SIMD_FORCE_SCALAR                        1 // faster as scalar for current implementation
 
 /// ──────  Enable/Disable all Dev options ──────
-#define MANDEL_DEV_MODE                             1
+#define MANDEL_DEV_MODE                             0
 
 
 #if MANDEL_DEV_MODE // && defined(BL_DEBUG)

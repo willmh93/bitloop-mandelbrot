@@ -258,18 +258,16 @@ void Mandelbrot_Scene::onEvent(Event e)
         camera_vel_pos = avg_vel_pos.average();
         camera_vel_zoom = (avg_vel_zoom.average() - 1) * 0.6 + 1;
 
-        if (!platform()->is_mobile()) // Stopped wheeling mouse
+        //if (!platform()->is_mobile()) // Stopped wheeling mouse
             avg_vel_zoom.clear();
     }
 
-    if (e.type() == SDL_EVENT_MOUSE_BUTTON_UP)
+    if (e.type() == SDL_EVENT_MOUSE_BUTTON_UP ||
+        e.type() == SDL_EVENT_FINGER_UP)
     {
         avg_vel_zoom.clear();
         avg_vel_pos.clear();
     }
-
-    
-
 }
 
 SIM_END;
