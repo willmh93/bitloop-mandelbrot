@@ -1,6 +1,10 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": {"major": 3, "minor": 21, "patch": 0},
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
 
   "configurePresets": [
     {
@@ -11,7 +15,7 @@
         "BUILD_FLAVOR": "ninja-debug",
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/tooling/cmake/toolchain/vcpkg_autodetect.cmake",
         "VCPKG_INSTALL_OPTIONS": "--x-abi-tools-use-exact-versions"
       }
     },
@@ -23,7 +27,7 @@
         "BUILD_FLAVOR": "ninja-release",
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/tooling/cmake/toolchain/vcpkg_autodetect.cmake",
         "VCPKG_INSTALL_OPTIONS": "--x-abi-tools-use-exact-versions"
       }
     },
@@ -35,7 +39,7 @@
         "BUILD_FLAVOR": "vs2022",
         "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "YES",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/tooling/cmake/toolchain/vcpkg_autodetect.cmake",
         "VCPKG_INSTALL_OPTIONS": "--x-abi-tools-use-exact-versions"
       }
     },
@@ -46,8 +50,8 @@
       "cacheVariables": {
         "BUILD_FLAVOR": "wasm32-debug",
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
-        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/tooling/cmake/toolchain/vcpkg_autodetect.cmake",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/tooling/cmake/triplets",
         "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
         "VCPKG_TARGET_TRIPLET": "wasm32-emscripten-multithreaded",
         "VCPKG_CMAKE_CONFIGURE_OPTIONS": "-pthread -matomics -mbulk-memory",
@@ -61,8 +65,8 @@
       "cacheVariables": {
         "BUILD_FLAVOR": "wasm32-release",
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
-        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/tooling/cmake/toolchain/vcpkg_autodetect.cmake",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/tooling/cmake/triplets",
         "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
         "VCPKG_TARGET_TRIPLET": "wasm32-emscripten-multithreaded",
         "VCPKG_CMAKE_CONFIGURE_OPTIONS": "-pthread -matomics -mbulk-memory",
@@ -76,8 +80,8 @@
       "cacheVariables": {
         "BUILD_FLAVOR": "wasm32-release-debug-info",
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/vcpkg_autodetect.cmake",
-        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/tooling/cmake/toolchain/vcpkg_autodetect.cmake",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/tooling/cmake/triplets",
         "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
         "VCPKG_TARGET_TRIPLET": "wasm32-emscripten-multithreaded",
         "VCPKG_CMAKE_CONFIGURE_OPTIONS": "-pthread -matomics -mbulk-memory",
@@ -86,10 +90,25 @@
     }
   ],
   "buildPresets": [
-    { "name": "ninja-debug",               "configurePreset": "ninja-debug" },
-    { "name": "ninja-release",             "configurePreset": "ninja-release" },
-    { "name": "wasm32-debug",              "configurePreset": "wasm32-debug" },
-    { "name": "wasm32-release",            "configurePreset": "wasm32-release" },
-    { "name": "wasm32-release-debug-info", "configurePreset": "wasm32-release-debug-info" }
+    {
+      "name": "ninja-debug",
+      "configurePreset": "ninja-debug"
+    },
+    {
+      "name": "ninja-release",
+      "configurePreset": "ninja-release"
+    },
+    {
+      "name": "wasm32-debug",
+      "configurePreset": "wasm32-debug"
+    },
+    {
+      "name": "wasm32-release",
+      "configurePreset": "wasm32-release"
+    },
+    {
+      "name": "wasm32-release-debug-info",
+      "configurePreset": "wasm32-release-debug-info"
+    }
   ]
 }

@@ -7,39 +7,17 @@
 
 #include <bitloop.h>
 
+/// official kernels
+#include "kernels/kernel_mandel.hpp"
+#include "kernels/kernel_mandel_perturb.hpp"
+#include "kernels/kernel_mandel_perturb_simd.hpp"
+#include "kernels/kernel_mandel_perturb_simd_unrolled.hpp"
+
+/// experimental kernels
+#include "kernels/kernel_mandel_inertial.hpp"
+#include "kernels/kernel_newton.hpp"
+
 SIM_BEG;
-
-template<class T>
-using cplx = Vec2<T>;
-
-template<class T>
-FORCE_INLINE constexpr void mandel_step(cplx<T>& z, const cplx<T>& c)
-{
-    T xx = z.x * z.x;
-    T yy = z.y * z.y;
-    T xy = (z.x * z.y);
-
-    z.x = xx - yy + c.x;
-    z.y = (xy + xy) + c.y;
-}
-
-template<class T>
-FORCE_INLINE constexpr void mandel_step_derivative(const cplx<T>& z, cplx<T>& dz)
-{
-    const T zx_dzx = z.x * dz.x;
-    const T zy_dzy = z.y * dz.y;
-    const T zx_dzy = z.x * dz.y;
-    const T zy_dzx = z.y * dz.x;
-
-    dz.x = ((zx_dzx - zy_dzy) + (zx_dzx - zy_dzy)) + T(1);
-    dz.y = (zx_dzy + zy_dzx) + (zx_dzy + zy_dzx);
-}
-
-template<class T>
-FORCE_INLINE constexpr T cplx_mag2(const cplx<T>& z)
-{
-    return z.x * z.x + z.y * z.y;
-}
 
 template<typename T>
 FORCE_INLINE bool interiorCheck(T x0, T y0)
@@ -61,714 +39,6 @@ FORCE_INLINE bool interiorCheck(T x0, T y0)
         return true;
 
     return false;
-}
-
-template<class T>
-FORCE_INLINE T clamp01(T v)
-{
-    return v < T(0) ? T(0) : (v > T(1) ? T(1) : v);
-}
-
-// helper for looking ahead multiple steps (experimental)
-template<typename T>
-inline cplx<T> process_z(int steps, cplx<T> z, const cplx<T>& c)
-{
-    for (int i = 0; i < steps; i++)
-        mandel_step(z, c);
-
-    return z;
-}
-
-// plain mandelbrot kernet for ITER + DIST + STRIPE
-template<class T, KernelFeatures S>
-FORCE_INLINE void mandel_kernel(
-    T x0, T y0,
-    int iter_lim,
-    f64& depth,
-    f64& dist,
-    StripeAccum& stripe,
-    StripeParams sp = {})
-{
-    constexpr bool NEED_DIST        = (bool)(S & KernelFeatures::DIST);
-    constexpr bool NEED_SMOOTH_ITER = (bool)(S & KernelFeatures::ITER);
-    constexpr bool NEED_STRIPES     = (bool)(S & KernelFeatures::STRIPES);
-
-    constexpr T escape_r2 = T(escape_radius2<S>());
-    constexpr T zero = T(0), one = T(1);
-
-    int iter = 0;
-    T r2 = T{ 0 };
-
-    cplx<T> z{ zero, zero };
-    cplx<T> c{ x0, y0 };
-    cplx<T> dz{ one, zero };
-
-    // stripe accumulators
-    if constexpr (NEED_STRIPES)
-        stripe.n = (int)sp.freq;  // fix n for this compute
-
-    while (true)
-    {
-        if constexpr (NEED_DIST)
-            mandel_step_derivative(z, dz);
-
-        cplx<T> z0 = z;
-
-        // step
-        mandel_step(z, c);
-        ++iter;
-
-        // update radius^2
-        r2 = cplx_mag2(z);
-
-        if constexpr (NEED_STRIPES)
-        {
-            float invr = 1.0f / std::sqrt((f32)r2);
-            float c = (float)z.x * invr; // cos
-            float s = (float)z.y * invr; // sin
-            stripe.accumulate(c, s);
-        }
-        if (r2 > escape_r2 || iter >= iter_lim) break;
-    }
-
-    const bool escaped = (r2 > escape_r2) && (iter < iter_lim);
-
-    if constexpr (NEED_DIST)
-    {
-        if (escaped) {
-            const T r = sqrt(r2);
-            const T dz_abs = sqrt(cplx_mag2(dz));
-            dist = (dz_abs == zero) ? 0.0 : (f64)(r * log(r) / dz_abs);
-        }
-        else
-            dist = -1.0;
-    }
-
-    if (!escaped)
-    {
-        depth = INSIDE_MANDELBROT_SET;
-        if constexpr (NEED_STRIPES) stripe.escape(0.0);
-        return;
-    }
-
-    if constexpr (NEED_SMOOTH_ITER)
-    {
-        // smooth iteration depth
-        const f64 log_abs_z = 0.5 * log_as_double(r2);
-        const f64 nu = (f64)iter + 1.0 - std::log2(log_abs_z);
-        depth = nu - smooth_depth_offset<S>();
-        if (depth < 0) depth = 0;
-    }
-    else
-    {
-        depth = (f64)iter;
-    }
-
-    if constexpr (NEED_STRIPES)
-        stripe.escape((f64)r2);
-}
-
-template<class T>
-struct alignas(16) RefStep {
-    T pre2x, pre2y;
-    T postx, posty;
-    T slack2;      
-    T _pad;
-};
-
-template<class T>
-struct RefOrbit 
-{
-    std::vector<cplx<T>> z_pre;  // before step n+1
-    std::vector<cplx<T>> z_post; // after  step n+1
-    std::vector<T>       zpost_abs2;
-
-    T cx{}, cy{};
-
-    int  iter_esc = 0;
-    bool escaped = false;
-    int  max_ref = 0;
-};
-
-template<class T_lo>
-struct RefOrbitLo 
-{
-    T_lo cx{}, cy{};
-    int max_ref = 0;
-
-    std::vector<RefStep<T_lo>> steps;
-    const RefStep<T_lo>* step = nullptr;
-};
-
-template<class T, KernelFeatures S>
-FORCE_INLINE void build_ref_orbit(const T& cx, const T& cy, int iter_lim, RefOrbit<T>& out)
-{
-    constexpr T ER2 = T(escape_radius2<S>());
-    const T zero = T(0);
-
-    out.cx = cx; 
-    out.cy = cy;
-
-    out.z_pre.clear(); 
-    out.z_post.clear();
-    out.zpost_abs2.clear();
-
-    out.z_pre.reserve(iter_lim);
-    out.z_post.reserve(iter_lim);
-    out.zpost_abs2.reserve(iter_lim);
-
-    out.iter_esc = iter_lim;
-    out.escaped = false;
-
-    cplx<T> z{ zero, zero };
-    cplx<T> c{ cx, cy };
-
-    for (int n = 0; n < iter_lim; ++n)
-    {
-        // pre
-        out.z_pre.push_back(z);
-
-        // step
-        mandel_step(z, c);
-
-        // post
-        out.z_post.push_back(z);
-        out.zpost_abs2.push_back(z.x * z.x + z.y * z.y);
-
-        // check for escape
-        if (!out.escaped && cplx_mag2(z) > ER2) 
-        {
-            out.iter_esc = n + 1;
-            out.escaped = true;
-            break;
-        }
-    }
-
-    // last post-step index that is still safe to use
-    out.max_ref = out.escaped ? (out.iter_esc - 1) : (int)out.z_post.size() - 1;
-    if (out.max_ref < 0) out.max_ref = 0;
-}
-
-template<class Thi, class T_lo, KernelFeatures F>
-inline void downcast_orbit(const RefOrbit<Thi>& hi, RefOrbitLo<T_lo>& lo)
-{
-    const size_t N = hi.z_pre.size();
-    lo.steps.resize(N);
-
-    const T_lo ER = (T_lo)escape_radius<F>();
-
-    for (size_t i = 0; i < N; ++i) 
-    {
-        const T_lo zx = (T_lo)hi.z_pre[i].x;
-        const T_lo zy = (T_lo)hi.z_pre[i].y;
-
-        const T_lo postx = (T_lo)hi.z_post[i].x;
-        const T_lo posty = (T_lo)hi.z_post[i].y;
-
-        // precompute slack^2
-        const T_lo zabs = (T_lo)std::sqrt((f64)hi.zpost_abs2[i]);
-        const T_lo s = std::max<T_lo>(T_lo(0), ER - zabs);
-        const T_lo slack2 = s * s;
-
-        // fill packed step
-        RefStep<T_lo>& st = lo.steps[i];
-        st.pre2x = zx + zx;
-        st.pre2y = zy + zy;
-        st.postx = postx;
-        st.posty = posty;
-        st.slack2 = slack2;
-        st._pad = T_lo(0);
-    }
-
-    lo.cx = (T_lo)hi.cx;
-    lo.cy = (T_lo)hi.cy;
-    lo.max_ref = hi.max_ref;
-
-    // expose raw pointer for kernel
-    lo.step = lo.steps.data();
-}
-
-// Perturbation (no SIMD)
-template<class T_lo, class T_hi, KernelFeatures F>
-FORCE_INLINE bool mandel_kernel_perturb(
-    const RefOrbitLo<T_lo>& ref,
-    T_lo dcx, T_lo dcy,
-    int iter_lim,
-    f64& depth,
-    f64& dist,
-    StripeAccum& stripe,
-    StripeParams sp = {})
-{
-    using V2 = simd2::v2<T_lo>;
-
-    constexpr bool NEED_DIST = (bool)(F & KernelFeatures::DIST);
-    constexpr bool NEED_STRIPES = (bool)(F & KernelFeatures::STRIPES);
-    constexpr T_lo  ER2 = T_lo(escape_radius2<F>());
-
-    int ref_i = 0;
-    const int max_ref = std::max(0, ref.max_ref);
-
-    // --- delta state ---
-    T_lo dx = 0, dy = 0;
-
-    // --- derivative (for distance estimate) ---
-    T_lo ddx = T_lo(1);
-    T_lo ddy = T_lo(0);
-
-    // --- z (previous step) ---
-    T_lo zx_prev = 0, zy_prev = 0;
-
-    // --- stripe accumulators ---
-    if constexpr (NEED_STRIPES)
-        stripe.n = (int)sp.freq;  // fix n for this compute
-
-    for (int n = 0; n < iter_lim; ++n)
-    {
-        // 1) update derivative
-        if constexpr (NEED_DIST)
-        {
-            const T_lo tdx = T_lo(2) * zx_prev * ddx - T_lo(2) * zy_prev * ddy + T_lo(1);
-            const T_lo tdy = T_lo(2) * zx_prev * ddy + T_lo(2) * zy_prev * ddx;
-            ddx = tdx;
-            ddy = tdy;
-        }
-
-        // 2) advance delta
-        const RefStep<T_lo>& s = ref.step[ref_i];
-
-        const T_lo c2x = s.pre2x;
-        const T_lo c2y = s.pre2y;
-
-        const T_lo sx = c2x + dx;
-        const T_lo sy = c2y + dy;
-
-        const T_lo dx_sx = dx * sx;
-        const T_lo dy_sy = dy * sy;
-        const T_lo dx_sy = dx * sy;
-        const T_lo dy_sx = dy * sx;
-
-        dx = dx_sx - dy_sy + dcx;
-        dy = dx_sy + dy_sx + dcy;
-
-        // 3) build reference z_post
-        const T_lo zpostx = s.postx;
-        const T_lo zposty = s.posty;
-
-        const T_lo zax = zpostx + dx;
-        const T_lo zay = zposty + dy;
-
-        const T_lo r2 = zax * zax + zay * zay;
-
-        // 4) STRIPES sampling on z_{n+1}
-        if constexpr (NEED_STRIPES) {
-
-            float invr = 1.0f / std::sqrt((f32)r2);
-            float c = (float)zax * invr; // cos
-            float s = (float)zay * invr; // sin
-            stripe.accumulate(c, s);
-        }
-
-        // 5) escape test
-        if (r2 > ER2)
-        {
-            // smooth ITER
-            const f64 r2d = (f64)r2;
-            const f64 log_abs_z = 0.5 * std::log(std::max(r2d, 1e-300));
-            const f64 nu = f64(n + 1) + 1.0 - std::log2(std::max(log_abs_z, 1e-300));
-            depth = nu - smooth_depth_offset<F>();
-            if (depth < 0) depth = 0;
-
-            // DIST
-            if constexpr (NEED_DIST)
-            {
-                const T_lo r = T_lo(std::sqrt((f64)r2));
-                const T_lo dzabs = T_lo(std::hypot((f64)ddx, (f64)ddy));
-                dist = (dzabs == 0) ? 0 : (r * std::log(r) / dzabs);
-            }
-            else {
-                dist = 0;
-            }
-
-            // STRIPE
-            if constexpr (NEED_STRIPES)
-                stripe.escape(r2d);
-
-            return true;
-        }
-
-
-        // 6) rebase
-        const T_lo d2 = dx * dx + dy * dy;
-        bool must_rebase = false;
-
-        // A) after using the last safe ref step, rebase before the next iteration
-        if (ref_i == max_ref)
-            must_rebase = true;
-
-        // B) boundary-aware rebase
-        if (!must_rebase)
-        {
-            constexpr T_lo ALPHA2 = (T_lo)(0.75 * 0.75);
-            const T_lo lim2 = ALPHA2 * s.slack2;
-            if (d2 > lim2)
-                must_rebase = true;
-        }
-
-        // C) pauldelbrot rebase (near critical point)
-        if (!must_rebase) {
-            constexpr T_lo H = (T_lo)0.95;
-            if (r2 < H * d2)
-                must_rebase = true;
-        }
-
-        if (must_rebase)
-        {
-            // re-center
-            dx = zax;
-            dy = zay;
-
-            ref_i = 0;
-
-            zx_prev = zax;
-            zy_prev = zay;
-
-            continue;
-        }
-
-        ++ref_i;
-        zx_prev = zax; 
-        zy_prev = zay;
-    }
-
-    // Did not escape
-    depth = INSIDE_MANDELBROT_SET;
-    if constexpr (NEED_DIST)    dist = T_lo(-1);
-    if constexpr (NEED_STRIPES) stripe.escape(0.0);
-    return true;
-}
-
-
-// Perturbation (SIMD) - Not actively used, but kept for debugging/experimenting with new features
-template<class T_lo, class T_hi, KernelFeatures F>
-FORCE_INLINE bool mandel_kernel_perturb_simd(
-    const RefOrbitLo<T_lo>& ref,
-    T_lo dcx, T_lo dcy,
-    int iter_lim,
-    f64& depth,
-    f64& dist,
-    StripeAccum& stripe,
-    StripeParams sp
-    #if MANDEL_EXTENDED_FIELD_STATS
-    , ExtendedFieldStats& extended_stats
-    #endif
-)
-{
-    using V2 = simd2::v2<T_lo>;
-
-    constexpr bool NEED_DIST = (bool)(F & KernelFeatures::DIST);
-    constexpr bool NEED_STRIPES = (bool)(F & KernelFeatures::STRIPES);
-    constexpr T_lo ER2 = T_lo(escape_radius2<F>());
-
-    int ref_i = 0;
-    const int max_ref = std::max(0, ref.max_ref);
-
-    // --- delta state ---
-    V2 v_d = V2::set(0, 0);
-
-    // --- derivative (for distance estimate) ---
-    T_lo ddx = T_lo(1);
-    T_lo ddy = T_lo(0);
-
-    // --- z (previous step) ---
-    T_lo zx_prev = 0, zy_prev = 0;
-
-    // --- stripe ---
-    if constexpr (NEED_STRIPES) 
-        stripe.n = (int)sp.freq;  // fix n for this compute
-
-    #if defined(__wasm_simd128__)
-    #pragma clang loop unroll_count(2)
-    #endif
-    for (int n = 0; n < iter_lim; ++n)
-    {
-        //timer_sample(ITER);
-        //timer_sample(DIST);
-        //timer_sample(STRIPE);
-        //timer_sample(ESCAPE);
-        //timer_sample(REBASE);
-
-        ///timer_t0(NORM_FIELD);
-        ///timer_t1(NORM_FIELD);
-
-        #if MANDEL_EXTENDED_FIELD_STATS
-        extended_stats.iter_count++;
-        #endif
-
-        // 1) update derivative
-        {
-            ///timer_t0(DIST);
-            if constexpr (NEED_DIST)
-            {
-                auto v_z = V2::set(zx_prev, zy_prev);
-                auto v_dd = V2::set(ddx, ddy);
-                auto v_twoz = V2::mul(V2::set(T_lo(2), T_lo(2)), v_z);
-                auto v_t = V2::add(V2::cmul(v_twoz, v_dd), V2::set(T_lo(1), T_lo(0)));
-                ddx = v_t.x();
-                ddy = v_t.y();
-            }
-            ///timer_t1(DIST);
-        }
-
-        ///timer_t0(ITER);
-        const RefStep<T_lo>& s = ref.step[ref_i];
-
-        auto v_pre2 = V2::load(&s.pre2x);
-        auto v_post = V2::load(&s.postx);
-
-        // 2) advance delta
-        auto v_s = V2::add(v_pre2, v_d);
-        v_d = V2::add(V2::cmul(v_d, v_s), V2::set(dcx, dcy));
-
-        // 3) build ref
-        auto v_zn1 = V2::add(v_post, v_d);
-        const T_lo zax = v_zn1.x();
-        const T_lo zay = v_zn1.y();
-        const T_lo r2 = V2::dot(v_zn1);
-        ///timer_t1(ITER);
-
-        // 4) STRIPES: accumulate unit direction for circular mean
-        {
-            timer_t0(STRIPE);
-            if constexpr (NEED_STRIPES)
-            {
-                float invr = 1.0f / std::sqrt((f32)r2);
-                float c = (float)zax * invr; // cos
-                float s = (float)zay * invr; // sin
-                stripe.accumulate(c, s);
-            }
-            timer_t1(STRIPE);
-        }
-
-        // 5) escape test
-        if (r2 > ER2)
-        {
-            ///timer_t0(ESCAPE);
-
-            #if MANDEL_EXTENDED_FIELD_STATS
-            extended_stats.escape_count++;
-            #endif
-
-            // smooth ITER
-            const f64 r2d = (f64)r2;
-            const f64 log_abs_z = 0.5 * std::log(std::max(r2d, 1e-300));
-            const f64 nu = f64(n + 1) + 1.0 - std::log2(std::max(log_abs_z, 1e-300));
-            depth = nu - smooth_depth_offset<F>();
-            if (depth < 0) depth = 0;
-
-            // DIST
-            {
-                if constexpr (NEED_DIST)
-                {
-                    const T_lo r = T_lo(std::sqrt((f64)r2));
-                    const T_lo dzabs = T_lo(std::hypot((f64)ddx, (f64)ddy));
-                    dist = (dzabs == 0) ? 0 : (r * std::log(r) / dzabs);
-                }
-
-                if constexpr (!NEED_DIST)
-                    dist = 0;
-            }
-
-            // STRIPE
-            if constexpr (NEED_STRIPES)
-                stripe.escape((f64)r2);
-            ///timer_t1(ESCAPE);
-
-            //timer_t1(NORM_FIELD)
-            return true;
-        }
-
-        ///timer_t0(REBASE);
-        // 6) rebase checks
-        const T_lo d2 = V2::dot(v_d);
-        bool must_rebase = (ref_i == max_ref);
-
-        constexpr T_lo ALPHA2 = (T_lo)(0.75 * 0.75);
-        constexpr T_lo H = (T_lo)0.95;
-
-        if (!must_rebase) 
-        {
-            const T_lo lim2 = ALPHA2 * s.slack2;
-            if (lim2 > (T_lo)0 && d2 > lim2)
-            {
-                must_rebase = true;
-
-                #if MANDEL_EXTENDED_FIELD_STATS
-                extended_stats.slack_rebases++;
-                #endif
-            }
-        }
-
-        if (!must_rebase) 
-        {
-            if (r2 < H * d2)
-            {
-                must_rebase = true;
-
-                #if MANDEL_EXTENDED_FIELD_STATS
-                extended_stats.dominance_rebases++;
-                #endif
-            }
-        }
-
-        if (must_rebase)
-        {
-            // re-center
-            v_d = V2::set(zax, zay);
-            ref_i = 0;
-
-            zx_prev = zax; 
-            zy_prev = zay;
-
-            //timer_t1(NORM_FIELD);
-
-            ///timer_t1(REBASE);
-            continue;
-        }
-        ///timer_t1(REBASE);
-
-        ++ref_i;
-        zx_prev = zax; 
-        zy_prev = zay;
-
-        //timer_t1(NORM_FIELD);
-    }
-
-    // Did not escape
-    depth = INSIDE_MANDELBROT_SET;
-
-    if constexpr (NEED_DIST) dist = T_lo(-1);
-    if constexpr (NEED_STRIPES) stripe.escape(0.0);
-
-    return true;
-}
-
-// Perturbation (SIMD, unrolled)
-template<class T_lo, class T_hi, KernelFeatures F>
-FORCE_INLINE bool mandel_kernel_perturb_simd_unrolled(
-    const RefOrbitLo<T_lo>& ref,
-    T_lo dcx, T_lo dcy, int iter_lim,
-    f64& depth, f64& dist, StripeAccum& stripe,
-    StripeParams sp = {})
-{
-    using V2 = simd2::v2<T_lo>;
-
-    constexpr bool NEED_DIST = (bool)(F & KernelFeatures::DIST);
-    constexpr bool NEED_STRIPES = (bool)(F & KernelFeatures::STRIPES);
-    constexpr T_lo ER2 = T_lo(escape_radius2<F>());
-    const int max_ref = std::max(0, ref.max_ref);
-
-    int ref_i = 0, n = 0;
-    T_lo dx = 0, dy = 0;
-    T_lo ddx = T_lo(1), ddy = T_lo(0);
-    T_lo zx_prev = 0, zy_prev = 0;
-
-    // --- stripes ---
-    if constexpr (NEED_STRIPES)
-        stripe.n = (int)sp.freq;
-
-    // unroll manually
-    #if defined(__clang__)
-    #pragma clang loop unroll(disable)
-    #endif
-
-    while (n < iter_lim)
-    {
-        #define MANDEL_KERNEL_UNROLLED_BODY                                                             \
-        {                                                                                               \
-            if constexpr (NEED_DIST) {                                                                  \
-                auto v_z = V2::set(zx_prev, zy_prev);                                                   \
-                auto v_dd = V2::set(ddx, ddy);                                                          \
-                auto v_twoz = V2::mul(V2::set(T_lo(2), T_lo(2)), v_z);                                  \
-                auto v_t = V2::add(V2::cmul(v_twoz, v_dd), V2::set(T_lo(1), T_lo(0)));                  \
-                ddx = v_t.x(); ddy = v_t.y();                                                           \
-            }                                                                                           \
-                                                                                                        \
-            const RefStep<T_lo>& s = ref.step[ref_i];                                                   \
-            auto v_pre2 = V2::load(&s.pre2x);                                                           \
-            auto v_post = V2::load(&s.postx);                                                           \
-            auto v_dx = V2::set(dx, dy);                                                                \
-            auto v_s = V2::add(v_pre2, v_dx);                                                           \
-            v_dx = V2::add(V2::cmul(v_dx, v_s), V2::set(dcx, dcy));                                     \
-            dx = v_dx.x(); dy = v_dx.y();                                                               \
-                                                                                                        \
-            auto v_zn1 = V2::add(v_post, V2::set(dx, dy));                                              \
-            const T_lo r2 = V2::dot(v_zn1);                                                             \
-            const T_lo zax = v_zn1.x(), zay = v_zn1.y();                                                \
-                                                                                                        \
-            if constexpr (NEED_STRIPES) {                                                               \
-                float invr = 1.0f / std::sqrt((f32)r2);                                                 \
-                float c = (float)zax * invr;                                                            \
-                float s = (float)zay * invr;                                                            \
-                stripe.accumulate(c, s);                                                                \
-            }                                                                                           \
-            if (r2 > ER2) {                                                                             \
-                const f64 r2d = (f64)r2;                                                                \
-                const f64 log_abs_z = 0.5 * std::log(std::max(r2d, 1e-300));                            \
-                const f64 nu = f64(n + 1) + 1.0 - std::log2(std::max(log_abs_z, 1e-300));               \
-                depth = nu - smooth_depth_offset<F>();                                                  \
-                if (depth < 0) depth = 0;                                                               \
-                                                                                                        \
-                if constexpr (NEED_DIST) {                                                              \
-                    const T_lo r = T_lo(std::sqrt((f64)r2));                                            \
-                    const T_lo dzabs = T_lo(std::hypot((f64)ddx, (f64)ddy));                            \
-                    dist = (dzabs == 0) ? 0 : (r * std::log(r) / dzabs);                                \
-                }                                                                                       \
-                else dist = 0;                                                                          \
-                                                                                                        \
-                if constexpr (NEED_STRIPES)                                                             \
-                    stripe.escape(r2d);                                                                 \
-                                                                                                        \
-                return true;                                                                            \
-            }                                                                                           \
-                                                                                                        \
-            const T_lo d2 = V2::dot(V2::set(dx, dy));                                                   \
-            bool must_rebase = (ref_i == max_ref);                                                      \
-                                                                                                        \
-            if (!must_rebase) {                                                                         \
-                constexpr T_lo ALPHA2 = (T_lo)(0.75 * 0.75);                                            \
-                const T_lo lim2 = ALPHA2 * s.slack2;                                                    \
-                if (lim2 > (T_lo)0 && d2 > lim2) must_rebase = true;                                    \
-            }                                                                                           \
-            if (!must_rebase) {                                                                         \
-                constexpr T_lo H = (T_lo)0.95;                                                          \
-                if (r2 < H * d2) must_rebase = true;                                                    \
-            }                                                                                           \
-            if (must_rebase) {                                                                          \
-                dx = zax; dy = zay;                                                                     \
-                ++n; ref_i = 0;                                                                         \
-                zx_prev = zax; zy_prev = zay;                                                           \
-                continue;                                                                               \
-            }                                                                                           \
-                                                                                                        \
-            zx_prev = zax; zy_prev = zay;                                                               \
-            ++n; ++ref_i;                                                                               \
-        }
-
-        MANDEL_KERNEL_UNROLLED_BODY; if (n >= iter_lim) break;
-        MANDEL_KERNEL_UNROLLED_BODY; if (n >= iter_lim) break;
-        MANDEL_KERNEL_UNROLLED_BODY; if (n >= iter_lim) break;
-        MANDEL_KERNEL_UNROLLED_BODY; if (n >= iter_lim) break;
-        MANDEL_KERNEL_UNROLLED_BODY; if (n >= iter_lim) break;
-        MANDEL_KERNEL_UNROLLED_BODY; if (n >= iter_lim) break;
-        MANDEL_KERNEL_UNROLLED_BODY; if (n >= iter_lim) break;
-        MANDEL_KERNEL_UNROLLED_BODY;
-    }
-
-    // Did not escape
-    depth = INSIDE_MANDELBROT_SET;
-    if constexpr (NEED_DIST)    dist = T_lo(-1);
-    if constexpr (NEED_STRIPES) stripe.escape(0.0);
-    return true;
 }
 
 /// ----- calculate raw [iter, dist, stripe] values for each field pixel -----
@@ -815,7 +85,7 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
             const T_lo dcy_lo = (T_lo)(wy - anchor.y);
 
             f64 dist;
-            StripeAccum stripe;
+            StripeAccum stripe(stripe_params.freq);
 
             #if MANDEL_EXTENDED_FIELD_STATS
             ExtendedFieldStats extended_stats;
@@ -825,11 +95,11 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
             #endif
 
             if constexpr (K == KernelMode::PERTURBATION_SIMD_UNROLLED)
-                mandel_kernel_perturb_simd_unrolled<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+                mandel_kernel_perturb_simd_unrolled<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
             else if constexpr (K == KernelMode::PERTURBATION_SIMD)
-                mandel_kernel_perturb_simd<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params MANDEL_ENXTENDED_ARG);
+                mandel_kernel_perturb_simd<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe MANDEL_ENXTENDED_ARG);
             else
-                mandel_kernel_perturb<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+                mandel_kernel_perturb<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
 
 
             field_pixel.set(depth, dist, stripe);
@@ -852,7 +122,6 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
         double fdp_tolerance = 9.0 * (1.0 - normalize_field_precision);
         double fdp_tolerance2 = fdp_tolerance * fdp_tolerance;
 
-        std::atomic<u64> norm_full_computes(0);
         norm_field.forEach([&](NormalizationPixel& field_pixel)
         {
             // already done 100% precise manual calculation on previous frame? skip
@@ -878,7 +147,7 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
             const T_lo dcx_lo = (T_lo)(world_pos.x - anchor.x);
             const T_lo dcy_lo = (T_lo)(world_pos.y - anchor.y);
 
-            f64 depth, dist; StripeAccum stripe;
+            f64 depth, dist; StripeAccum stripe(stripe_params.freq);
 
 
             #if MANDEL_EXTENDED_FIELD_STATS
@@ -888,14 +157,12 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
             #define MANDEL_ENXTENDED_ARG
             #endif
 
-            norm_full_computes.fetch_add(1);
-
             if constexpr (K == KernelMode::PERTURBATION_SIMD_UNROLLED)
-                mandel_kernel_perturb_simd_unrolled<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+                mandel_kernel_perturb_simd_unrolled<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
             else if constexpr (K == KernelMode::PERTURBATION_SIMD)
-                mandel_kernel_perturb_simd<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params MANDEL_ENXTENDED_ARG);
+                mandel_kernel_perturb_simd<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe MANDEL_ENXTENDED_ARG);
             else
-                mandel_kernel_perturb<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe, stripe_params);
+                mandel_kernel_perturb<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
 
             field_pixel.set(depth, dist, stripe);
 
@@ -921,8 +188,11 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
             f64 depth = field_pixel.depth;
             if (depth >= 0) return;
     
-            f64 dist; StripeAccum stripe;
-            mandel_kernel<T, F>(wx, wy, iter_lim, depth, dist, stripe, stripe_params);
+            f64 dist; StripeAccum stripe(stripe_params.freq);
+            kernel_mandel<T, F>(wx, wy, iter_lim, depth, dist, stripe);
+            //mandel_newton_alt_kernel<T, F>(wx, wy, iter_lim, depth, dist, stripe);
+            //mandel_kernel_iter_only<T, F>(wx, wy, iter_lim, depth, dist, stripe);
+
             field_pixel.set(depth, dist, stripe);
     
         }, compute_tiles, timeout);
@@ -936,14 +206,14 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
             EscapeFieldPixel* existing_pixel = pending_field->get(p.x, p.y);
     
             if (existing_pixel) {
-             field_pixel.set(*existing_pixel);
-             return;
-         }
+                field_pixel.set(*existing_pixel);
+                return;
+            }
     
             // coordinate lies outside of viwport rect, do calculation
-            f64 depth, dist; StripeAccum stripe;
+            f64 depth, dist; StripeAccum stripe(stripe_params.freq);
             const Vec2<T> world_pos = field_pixel.worldPos<T>();
-            mandel_kernel<T, F>(world_pos.x, world_pos.y, iter_lim, depth, dist, stripe, stripe_params);
+            kernel_mandel<T, F>(world_pos.x, world_pos.y, iter_lim, depth, dist, stripe);
             field_pixel.set(depth, dist, stripe);
     
             // don't recalculate
@@ -962,19 +232,18 @@ FORCE_INLINE f64 toNormalizedDepth(f64 depth, f64 min_depth, f64 log1p_weight)
     {
         f64 depth_from_floor = depth - min_depth;
         if (depth_from_floor < 0.0) depth_from_floor = 0.0;
-        return Math::linear_log1p_lerp(depth_from_floor, log1p_weight);
+        return math::linearLog1pLerp(depth_from_floor, log1p_weight);
     }
     else
-        return Math::linear_log1p_lerp(depth, log1p_weight);
+        return math::linearLog1pLerp(depth, log1p_weight);
 }
 
 // returns signed log-normalized distance (depending on inversion)
 template<bool Invert>
 FORCE_INLINE f64 toNormalizedDist(f64 dist, f64 stable_min_dist, f64 stable_max_dist)
 {
-    //assert(dist >= 0);
     f64 rescaled_dist = log(dist);
-    return Math::lerpFactor(rescaled_dist, stable_min_dist, stable_max_dist);
+    return math::lerpFactor(rescaled_dist, stable_min_dist, stable_max_dist);
 }
 
 template<KernelFeatures F>
@@ -986,13 +255,85 @@ FORCE_INLINE f32 toNormalizedStripe(const StripeAccum& stripe, f32 phase)
     return stripeFromAccum(stripe, LOG_ER2, cphi, sphi);
 }
 
+///template<size_t BINS>
+///static void smooth_histogram(std::array<u64, BINS>& hist, int passes = 2)
+///{
+///    if constexpr (BINS == 0) return;
+///    std::array<double, BINS> cur{}, tmp{};
+///    double orig_sum = 0.0;
+///    for (size_t i = 0; i < BINS; ++i) { cur[i] = (double)hist[i]; orig_sum += cur[i]; }
+///    if (orig_sum == 0.0) return;
+///
+///    // Triangular smoothing (binomial [1,2,1] kernel), 'passes' times
+///    for (int p = 0; p < passes; ++p) {
+///        // edges: clamp
+///        tmp[0] = (3.0 * cur[0] + cur[1]) * 0.25;
+///        for (size_t i = 1; i + 1 < BINS; ++i)
+///            tmp[i] = (cur[i - 1] + 2.0 * cur[i] + cur[i + 1]) * 0.25;
+///        tmp[BINS - 1] = (cur[BINS - 2] + 3.0 * cur[BINS - 1]) * 0.25;
+///        cur.swap(tmp);
+///    }
+///
+///    // Renormalize to preserve total weight exactly
+///    double sm_sum = 0.0;
+///    for (size_t i = 0; i < BINS; ++i) sm_sum += cur[i];
+///    double scale = (sm_sum > 0.0) ? (orig_sum / sm_sum) : 1.0;
+///    for (size_t i = 0; i < BINS; ++i)
+///        hist[i] = (u64)std::llround(cur[i] * scale);
+///}
+///
+///template<size_t BINS>
+///static float weighted_quantile_from_hist(const std::array<u64, BINS>& hist, u64 rank, u64 total_w)
+///{
+///    if (total_w == 0) return 0.0f;
+///
+///    // Build double CDF
+///    std::array<double, BINS> cdf{};
+///    double acc = 0.0;
+///    for (size_t i = 0; i < BINS; ++i) { acc += (double)hist[i]; cdf[i] = acc; }
+///
+///    // Find first bin where CDF >= target
+///    const double target = (double)rank + 0.5; // mid-rank for smoother behavior
+///    size_t i = 0;
+///    while (i + 1 < BINS && cdf[i] < target) ++i;
+///
+///    // Interpolate inside bin using local count
+///    const double c_prev = (i == 0) ? 0.0 : cdf[i - 1];
+///    const double count = std::max(1.0, cdf[i] - c_prev);
+///    const double frac = std::clamp((target - c_prev) / count, 0.0, 1.0);
+///
+///    // Map to [0,1]
+///    return (float)(((double)i + frac) / (double)(BINS - 1));
+///}
+///
+///inline void sort_and_dedup(std::vector<std::pair<float, float>>& ideal_zf_numerator_map)
+///{
+///    // _ChatGPT_ Sort by key, then by value (so identical pairs become adjacent).
+///    std::sort(ideal_zf_numerator_map.begin(), ideal_zf_numerator_map.end(),
+///        [](const auto& a, const auto& b)
+///    {
+///        if (a.first < b.first) return true;
+///        if (a.first > b.first) return false;
+///        return a.second < b.second;
+///    });
+///
+///    // _ChatGPT_ Remove exact duplicate pairs (both first and second equal).
+///    ideal_zf_numerator_map.erase(
+///        std::unique(ideal_zf_numerator_map.begin(), ideal_zf_numerator_map.end(),
+///        [](const auto& a, const auto& b)
+///    {
+///        return a.first == b.first && a.second == b.second;
+///    }),
+///        ideal_zf_numerator_map.end());
+///}
+
 /// ----- determine [low, high, mean] of each feature, and normalized wrapping limits -----
-template<typename T, KernelFeatures F, bool Normalize_Depth, bool Invert_Dist>
+template<typename T, KernelFeatures F>
 void Mandelbrot_Scene::calculate_normalize_info()
 {
     // todo: move min/max/mean props to normalization field? It's field-independant
-    // Calculate normalized depth/dist
-    f32 zf = std::max(1.0f, (f32)bl::log10(camera.relativeZoom<f128>()));
+    
+    // Calculate normalized dist
     f64 sharpness_ratio = ((100.0 - dist_params.cycle_dist_sharpness) / 100.0 + 0.00001);
     f128 r1 = f128(0.1) / camera.relativeZoom<f128>();
     f128 r2 = f128(10.0) / camera.relativeZoom<f128>();
@@ -1076,9 +417,32 @@ void Mandelbrot_Scene::calculate_normalize_info()
         total_wstripe += bucket.sum_wstripe;
     }
 
+    // stripe magnutide (histogram version - what the below approximation tries to mimic)
+    ///f32 stripe_mag_hist;
+    ///smooth_histogram<BINS>(hist_w, 2);
+    ///constexpr f32 TAIL_FRAC = 0.05f;
+    ///const u64 rank_lo = (u64)std::floor(TAIL_FRAC * (f64)(total_w - 1));
+    ///const u64 rank_hi = (u64)std::floor((1.0 - TAIL_FRAC) * (f64)(total_w - 1));
+    ///const f32 stripe_lo = weighted_quantile_from_hist<BINS>(hist_w, rank_lo, total_w);
+    ///const f32 stripe_hi = weighted_quantile_from_hist<BINS>(hist_w, rank_hi, total_w);
+    ///stripe_mag_hist = stripe_hi - stripe_lo;
+
+    // stripe magnitude (fairly good approximation from zoom + spline)
+    // avoiding use of histogram for stripe magnitude allows for smooth 'phase' animation
+    f32 zf = (f32)bl::log10(camera.relativeZoom<f128>());
+    f32 stripe_mag_dynamic = MandelSplines::stripe_zf_spline(zf) / zf;
+
+    // dev: compare normalized zoom magnitude computed by histogram, collect plots for x/y graph for manual spline approximation
+    ///if (stripe_weight > 0.1 && zf_raw > 0.1)
+    ///{
+    ///    f32 ideal_numerator = (stripe_hi - stripe_lo) * zf_raw;
+    ///    ideal_zf_numerator_map.push_back(std::pair(zf_raw, ideal_numerator));
+    ///    sort_and_dedup(ideal_zf_numerator_map);
+    ///}
+    ///f32 stripe_mag = stripe_mag_from_hist ? stripe_mag_hist : stripe_mag_dynamic;
+
+    f32 stripe_mag = stripe_mag_dynamic;
     f32 stripe_mean = (f32)(total_wstripe / (f64)total_w);
-    //f32 stripe_mag = 0.5f / zf;
-    f32 stripe_mag = 0.1f / zf;
 
     active_field->stable_min_dist = stable_min_dist;
     active_field->stable_max_dist = stable_max_dist;
@@ -1098,12 +462,12 @@ void Mandelbrot_Scene::calculate_normalize_info()
         f64 assumed_iter_lim = mandelbrotIterLimit(camera.relativeZoom<f128>()) * 0.5;
         f64 color_cycle_iters = iter_params.cycle_iter_value * assumed_iter_lim;
 
-        active_field->log_color_cycle_iters = Math::linear_log1p_lerp(color_cycle_iters, iter_params.cycle_iter_log1p_weight);
+        active_field->log_color_cycle_iters = math::linearLog1pLerp(color_cycle_iters, iter_params.cycle_iter_log1p_weight);
     }
     else
     {
         /// "cycle_iter_value" represents actual iter_lim
-        active_field->log_color_cycle_iters = Math::linear_log1p_lerp(iter_params.cycle_iter_value, iter_params.cycle_iter_log1p_weight);
+        active_field->log_color_cycle_iters = math::linearLog1pLerp(iter_params.cycle_iter_value, iter_params.cycle_iter_log1p_weight);
     }
 
     active_field->cycle_dist_value = dist_params.cycle_dist_value;
@@ -1119,8 +483,6 @@ void Mandelbrot_Scene::normalize_field()
 
     f64 cycle_iters = active_field->log_color_cycle_iters;
     f32 cycle_dist = (f32)active_field->cycle_dist_value;
-
-    //f32 zf = std::max(1.0f, (f32)bl::log10(camera.relativeZoom<f128>()));
 
     active_bmp->forEachPixel([&](int x, int y)
     {
@@ -1152,7 +514,7 @@ void Mandelbrot_Scene::normalize_field()
         if constexpr ((bool)(F & KernelFeatures::STRIPES))
         {
             float s = toNormalizedStripe<F>(field_pixel.stripe, stripe_params.phase);
-            s = (s - active_field->mean_stripe);// *zf;
+            s = (s - active_field->mean_stripe);
             final_stripe = stripe_tone.apply(s) - 0.5f;
         }
 
@@ -1163,7 +525,7 @@ void Mandelbrot_Scene::normalize_field()
 }
 
 /// ----- shades pixels based on final_iter, final_dist, final_stripe -----
-template<MandelShaderFormula F, bool Highlight_Optimized_Interior>
+template<bool Highlight_Optimized_Interior>
 void Mandelbrot_Scene::shadeBitmap()
 {
     f64 iter_ratio, dist_ratio, stripe_ratio;
@@ -1202,25 +564,15 @@ void Mandelbrot_Scene::shadeBitmap()
         f32 w_dist_v   = (dist_v   * (f32)dist_ratio);
         f32 w_stripe_v = (stripe_v * (f32)stripe_ratio);
 
-        f32 combined_t;
-
-        if constexpr (F == MandelShaderFormula::ITER_DIST_STRIPE)
-        {
-            //combined_t = std::clamp(w_iter_v + w_dist_v + w_stripe_v, 0.0f, 1.0f);
-            combined_t = Math::wrap01(w_iter_v + w_dist_v + w_stripe_v);
-        }
-        else if constexpr (F == MandelShaderFormula::ITER_DIST__MUL__STRIPE)
-        {
-            combined_t = Math::wrap01((w_iter_v + w_dist_v) * w_stripe_v);
-        }
-        else if constexpr (F == MandelShaderFormula::ITER__MUL__DIST_STRIPE)
-        {
-            combined_t = Math::wrap01(w_iter_v * (w_dist_v + w_stripe_v));
-        }
-        else if constexpr (F == MandelShaderFormula::ITER_STRIPE__MULT__DIST)
-        {
-            combined_t = Math::wrap01((w_iter_v + w_stripe_v) * w_dist_v);
-        }
+        f32 combined_t = mixKernelFeatures(w_iter_v, w_dist_v, w_stripe_v,
+            iter_x_dist_weight,  
+            dist_x_stripe_weight,
+            stripe_x_iter_weight,
+            iter_x_distStripe_weight,
+            dist_x_iterStripe_weight,
+            stripe_x_iterDist_weight
+        );
+        combined_t = math::wrap01(combined_t);
 
         if (isfinite(combined_t))
         {

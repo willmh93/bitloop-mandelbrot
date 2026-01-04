@@ -7,7 +7,8 @@ enum struct GradientPreset
 {
     CLASSIC,
     RAINBOW,
-    WAVES,
+    NEON_WAVES,
+    SOFT_WAVES,
     PHOTON,
     CLOUDS,
     RGB_BANDS,
@@ -18,7 +19,8 @@ enum struct GradientPreset
 static const char* ColorGradientNames[(int)GradientPreset::COUNT] = {
     "CLASSIC",
     "RAINBOW",
-    "WAVES",
+    "NEON_WAVES",
+    "SOFT_WAVES",
     "REFRACTION",
     "CLOUDS",
     "RGB_BANDS"
@@ -52,7 +54,7 @@ inline void transformGradient(ImGradient& dest, const ImGradient& src, float gra
     {
         auto adjusted = Color(marks[i].color).adjustHue((float)hue_shift).vec4();
         memcpy(shifted_marks[i].color, adjusted.data(), sizeof(float) * 4);
-        shifted_marks[i].position = Math::wrap(marks[i].position + (float)gradient_shift, 0.0f, 1.0f);
+        shifted_marks[i].position = math::wrap(marks[i].position + (float)gradient_shift, 0.0f, 1.0f);
     }
     dest.refreshCache();
 }
@@ -88,7 +90,7 @@ inline void generateGradientFromPreset(
     }
     break;
 
-    case GradientPreset::WAVES:
+    case GradientPreset::NEON_WAVES:
     {
         grad.addMark(0.0f, ImColor(0, 0, 0));
         grad.addMark(0.3f, ImColor(73, 54, 254));
@@ -96,6 +98,17 @@ inline void generateGradientFromPreset(
         grad.addMark(0.53f, ImColor(255, 56, 41));
         grad.addMark(0.62f, ImColor(208, 171, 1));
         grad.addMark(0.62001f, ImColor(0, 0, 0));
+    }
+    break;
+
+    case GradientPreset::SOFT_WAVES:
+    {
+        grad.addMark(0.30f, ImColor(171, 84, 61));
+        grad.addMark(0.50f, ImColor(190, 163, 92));
+        grad.addMark(0.58f, ImColor(255, 225, 156));
+        grad.addMark(0.62f, ImColor(235, 218, 143));
+        grad.addMark(0.64f, ImColor(149, 133, 60));
+        grad.addMark(0.65f, ImColor(0, 0, 0));
     }
     break;
 
@@ -151,11 +164,11 @@ inline void generateGradientFromPreset(
             colorGradientTemplate(type, x, r, g, b);
             Color::RGBtoHSV(r, g, b, h, s, v);
 
-            float h_ratio = Math::absAvgRatio(last_h, h);
-            float s_ratio = Math::absAvgRatio(last_s, s);
-            float v_ratio = Math::absAvgRatio(last_v, v);
+            float h_ratio = math::absAvgRatio(last_h, h);
+            float s_ratio = math::absAvgRatio(last_s, s);
+            float v_ratio = math::absAvgRatio(last_v, v);
 
-            //float avg_ratio = Math::avg(h_ratio, s_ratio, v_ratio);
+            //float avg_ratio = math::avg(h_ratio, s_ratio, v_ratio);
             if (h_ratio > hue_threshold ||
                 s_ratio > sat_threshold ||
                 v_ratio > val_threshold)

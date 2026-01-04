@@ -17,9 +17,9 @@ enum class MandelTransform
 enum struct MandelShaderFormula
 {
     ITER_DIST_STRIPE,          // a+b+c
-    ITER_DIST__MUL__STRIPE,   // (a+b)*c
-    ITER__MUL__DIST_STRIPE,  // a*(b+c)
-    ITER_STRIPE__MULT__DIST,  // a*(b+c)
+    ITER_DIST__MUL__STRIPE,    // (a+b)*c
+    ITER__MUL__DIST_STRIPE,    // a*(b+c)
+    ITER_STRIPE__MULT__DIST,   // a*(b+c)
     COUNT
     //~ // todo: Always tween stripe weight to 0 before switching mode
 };

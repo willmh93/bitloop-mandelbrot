@@ -11,7 +11,7 @@
     /// ──────  Enabled Dev Options ──────
     #define MANDEL_DEV_EDIT_TWEEN_SPLINES           0
     #define MANDEL_EXTENDED_FIELD_STATS             0
-
+    #define MANDEL_EXPERIMENTAL_TESTS               0
 #endif
 
 

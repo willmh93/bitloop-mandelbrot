@@ -64,10 +64,10 @@ void Mandelbrot_Scene::UI::populateStats()
 
                 #if MANDEL_EXTENDED_FIELD_STATS
                 ImGui::Spacing();
-                TableRowText2("Total slack rebases", "%s", TextUtil::format_human_u64(stats.field_info.extended.slack_rebases).c_str());
-                TableRowText2("Total dominance rebases",  "%s", TextUtil::format_human_u64(stats.field_info.extended.dominance_rebases).c_str());
-                TableRowText2("Total iterations", "%s", TextUtil::format_human_u64(stats.field_info.extended.iter_count).c_str());
-                TableRowText2("Total escapes", "%s", TextUtil::format_human_u64(stats.field_info.extended.escape_count).c_str());
+                TableRowText2("Total slack rebases", "%s", text::format_human_u64(stats.field_info.extended.slack_rebases).c_str());
+                TableRowText2("Total dominance rebases",  "%s", text::format_human_u64(stats.field_info.extended.dominance_rebases).c_str());
+                TableRowText2("Total iterations", "%s", text::format_human_u64(stats.field_info.extended.iter_count).c_str());
+                TableRowText2("Total escapes", "%s", text::format_human_u64(stats.field_info.extended.escape_count).c_str());
                 #endif
 
                 // active features
@@ -175,6 +175,19 @@ void Mandelbrot_Scene::UI::populateStats()
     }
 }
 
+template<bool I, bool D, bool S> void syncHist(EscapeField& field, MandelStats& stats)
+{
+    if constexpr (!I || !D || !S) return;
+    for (size_t i = 0; i < field.size(); i++)
+    {
+        EscapeFieldPixel& p = field[i];
+        if (p.depth > 1e10 || isnan(p.depth)) continue;
+        if constexpr (I) stats.iter_histogram.push_back(p.final_depth);
+        if constexpr (D) stats.dist_histogram.push_back(p.final_dist);
+        if constexpr (S) stats.stripe_histogram.push_back(p.final_stripe);
+    }
+};
+
 void Mandelbrot_Scene::collectStats(bool renormalized)
 {
     // reset stats we need syncing
@@ -222,28 +235,38 @@ void Mandelbrot_Scene::collectStats(bool renormalized)
     }
     #endif
 
-    if (finalized_compute)
+    if (finalized_compute || 
+        Changed(iter_hist_visible) ||
+        Changed(dist_hist_visible) ||
+        Changed(stripe_hist_visible))
     { 
         if (!this->active_field) return;
         EscapeField& field = *this->active_field;
 
         // Stripe histogram
-        stats.sync(MandelStats::Dirty::iter_histogram);
-        stats.sync(MandelStats::Dirty::dist_histogram);
-        stats.sync(MandelStats::Dirty::stripe_histogram);
-
-        stats.iter_histogram.clear();
-        stats.dist_histogram.clear();
-        stats.stripe_histogram.clear();
-
-        for (size_t i = 0; i < field.size(); i++)
+        if (iter_hist_visible)
         {
-            EscapeFieldPixel& p = field[i];
-            if (p.depth > 1e10 || isnan(p.depth)) continue;
-            stats.iter_histogram.push_back(p.final_depth);
-            stats.dist_histogram.push_back(p.final_dist);
-            stats.stripe_histogram.push_back(p.final_stripe);
+            stats.sync(MandelStats::Dirty::iter_histogram);
+            stats.iter_histogram.clear();
         }
+        
+        if (dist_hist_visible)
+        {
+            stats.sync(MandelStats::Dirty::dist_histogram);
+            stats.dist_histogram.clear();
+        }
+
+        if (stripe_hist_visible)
+        {
+            stats.sync(MandelStats::Dirty::stripe_histogram);
+            stats.stripe_histogram.clear();
+        }
+  
+        table_invoke(dispatch_table(syncHist, field, stats),
+            iter_hist_visible,
+            dist_hist_visible,
+            stripe_hist_visible
+        );
     }
 }
 

@@ -79,7 +79,7 @@ double Mandelbrot_Scene::lerpState(
     f128 lift_height = this->tween_lift * lift_weight;
 
     double base_zoom_f = this->tween_base_zoom_spline((float)f);
-    f128 dst_height = Math::lerp(a_height, b_height, base_zoom_f) + lift_height;
+    f128 dst_height = math::lerp(a_height, b_height, base_zoom_f) + lift_height;
 
     // lerp camera pos
     CameraInfo::lerp(this->camera, a.camera, b.camera, pos_f);
@@ -92,9 +92,9 @@ double Mandelbrot_Scene::lerpState(
     constexpr float two_thirds = 2.0f / 3.0f;
     const float tween_f = (float)f;
 
-    float f0 = Math::lerpFactorClamped(tween_f, 0.0f, one_third);
-    float f1 = Math::lerpFactorClamped(tween_f, one_third, two_thirds);
-    float f2 = Math::lerpFactorClamped(tween_f, two_thirds, 1.0f);
+    float f0 = math::lerpFactorClamped(tween_f, 0.0f, one_third);
+    float f1 = math::lerpFactorClamped(tween_f, one_third, two_thirds);
+    float f2 = math::lerpFactorClamped(tween_f, two_thirds, 1.0f);
 
     //if (tween_f < one_third)
     if (tween_f < 0.5)
@@ -103,7 +103,7 @@ double Mandelbrot_Scene::lerpState(
         float lerp_f0 = this->tween_base_zoom_spline(f0);
 
         // Zoom out phase
-        f128 dst_height = Math::lerp(a_height, f128(1), lerp_f0);
+        f128 dst_height = math::lerp(a_height, f128(1), lerp_f0);
         this->camera.setRelativeZoom(fromHeight(dst_height));
 
     }
@@ -113,11 +113,11 @@ double Mandelbrot_Scene::lerpState(
         float lerp_f1 = this->tween_base_zoom_spline(f1);
 
         // Pan phase
-        f128 tx = Math::lerp(a.camera.x<f128>(), b.camera.x<f128>(), lerp_f1);
-        f128 ty = Math::lerp(a.camera.y<f128>(), b.camera.y<f128>(), lerp_f1);
+        f128 tx = math::lerp(a.camera.x<f128>(), b.camera.x<f128>(), lerp_f1);
+        f128 ty = math::lerp(a.camera.y<f128>(), b.camera.y<f128>(), lerp_f1);
         this->camera.setPos(tx, ty);
-        this->camera.setRotation(Math::lerpAngle(a.camera.rotation(), b.camera.rotation(), lerp_f1));
-        this->camera.setStretch(Math::lerp(a.camera.stretch(), b.camera.stretch(), lerp_f1));
+        this->camera.setRotation(math::lerpAngle(a.camera.rotation(), b.camera.rotation(), lerp_f1));
+        this->camera.setStretch(math::lerp(a.camera.stretch(), b.camera.stretch(), lerp_f1));
     }
     //else
     if (tween_f > 0.5)
@@ -126,41 +126,41 @@ double Mandelbrot_Scene::lerpState(
         //float f2 = (tween_f - two_thirds) / one_third;
         float lerp_f2 = this->tween_base_zoom_spline(f2);
 
-        f128 dst_height = Math::lerp(f128(1), b_height, lerp_f2);
+        f128 dst_height = math::lerp(f128(1), b_height, lerp_f2);
         this->camera.setRelativeZoom(fromHeight(dst_height));
     }
 
     // quality
-    this->quality = Math::lerp(src_iter_lim, dst_iter_lim, pos_f);
+    this->quality = math::lerp(src_iter_lim, dst_iter_lim, pos_f);
 
     // color cycle
     float color_cycle_f = this->tween_color_cycle((float)f);
 
     // shader weights
-    this->iter_weight = Math::lerp(a.iter_weight, b.iter_weight, color_cycle_f);
-    this->dist_weight = Math::lerp(a.dist_weight, b.dist_weight, color_cycle_f);
-    this->stripe_weight = Math::lerp(a.stripe_weight, b.stripe_weight, color_cycle_f);
+    this->iter_weight = math::lerp(a.iter_weight, b.iter_weight, color_cycle_f);
+    this->dist_weight = math::lerp(a.dist_weight, b.dist_weight, color_cycle_f);
+    this->stripe_weight = math::lerp(a.stripe_weight, b.stripe_weight, color_cycle_f);
 
     // iter shader
-    this->iter_params.cycle_iter_value = Math::lerp(a.iter_params.cycle_iter_value, b.iter_params.cycle_iter_value, color_cycle_f);
-    this->iter_params.cycle_iter_log1p_weight = Math::lerp(a.iter_params.cycle_iter_log1p_weight, b.iter_params.cycle_iter_log1p_weight, color_cycle_f);
+    this->iter_params.cycle_iter_value = math::lerp(a.iter_params.cycle_iter_value, b.iter_params.cycle_iter_value, color_cycle_f);
+    this->iter_params.cycle_iter_log1p_weight = math::lerp(a.iter_params.cycle_iter_log1p_weight, b.iter_params.cycle_iter_log1p_weight, color_cycle_f);
 
     // dist shader
-    this->dist_params.cycle_dist_value = Math::lerp(a.dist_params.cycle_dist_value, b.dist_params.cycle_dist_value, color_cycle_f);
-    this->dist_params.cycle_dist_sharpness = Math::lerp(a.dist_params.cycle_dist_sharpness, b.dist_params.cycle_dist_sharpness, color_cycle_f);
+    this->dist_params.cycle_dist_value = math::lerp(a.dist_params.cycle_dist_value, b.dist_params.cycle_dist_value, color_cycle_f);
+    this->dist_params.cycle_dist_sharpness = math::lerp(a.dist_params.cycle_dist_sharpness, b.dist_params.cycle_dist_sharpness, color_cycle_f);
 
     // stripe shader
-    this->stripe_params.freq = Math::lerp(a.stripe_params.freq, b.stripe_params.freq, color_cycle_f);
-    this->stripe_params.phase = Math::lerp(a.stripe_params.phase, b.stripe_params.phase, color_cycle_f);
-    //this->stripe_params.contrast = Math::lerp(a.stripe_params.contrast, b.stripe_params.contrast, color_cycle_f);
+    this->stripe_params.freq = math::lerp(a.stripe_params.freq, b.stripe_params.freq, color_cycle_f);
+    this->stripe_params.phase = math::lerp(a.stripe_params.phase, b.stripe_params.phase, color_cycle_f);
+    //this->stripe_params.contrast = math::lerp(a.stripe_params.contrast, b.stripe_params.contrast, color_cycle_f);
 
     // lerp gradient/hue shift
-    this->gradient_shift = Math::lerp(a.gradient_shift, b.gradient_shift, pos_f);
-    this->hue_shift = Math::lerp(a.hue_shift, b.hue_shift, pos_f);
+    this->gradient_shift = math::lerp(a.gradient_shift, b.gradient_shift, pos_f);
+    this->hue_shift = math::lerp(a.hue_shift, b.hue_shift, pos_f);
 
     // lerp animation speed for gradient/hue shift
-    this->gradient_shift_step = Math::lerp(a.gradient_shift_step, b.gradient_shift_step, pos_f);
-    this->hue_shift_step = Math::lerp(a.hue_shift_step, b.hue_shift_step, pos_f);
+    this->gradient_shift_step = math::lerp(a.gradient_shift_step, b.gradient_shift_step, pos_f);
+    this->hue_shift_step = math::lerp(a.hue_shift_step, b.hue_shift_step, pos_f);
 
     // lerp color gradient
     ImGradient::lerp(this->gradient, a.gradient, b.gradient, (float)f);
@@ -177,13 +177,13 @@ double Mandelbrot_Scene::lerpState(
     }
 
     // === Lerp quality ===
-    //this->iter_lim = Math::lerp(state_a.iter_lim, state_b.iter_lim, f);
+    //this->iter_lim = math::lerp(state_a.iter_lim, state_b.iter_lim, f);
 
     // === Lerp Cardioid Flattening Factor ===
-    //this->cardioid_lerp_amount = Math::lerp(state_a.cardioid_lerp_amount, state_b.cardioid_lerp_amount, f);
+    //this->cardioid_lerp_amount = math::lerp(state_a.cardioid_lerp_amount, state_b.cardioid_lerp_amount, f);
 
     // Spline Data
-    //memcpy(this->x_spline_point, Math::lerp(state_a.x_spline_points, state_b.x_spline_points, f));
+    //memcpy(this->x_spline_point, math::lerp(state_a.x_spline_points, state_b.x_spline_points, f));
 
     return 0;
 }
@@ -227,9 +227,9 @@ void Mandelbrot_Scene::updateTweening(double dt)
 
                     ///camera.zoom *= 1.0 + steady_zoom_mult_speed;
                     camera.setRelativeZoom(camera.relativeZoom<f128>() * (1.0 + steady_zoom_mult_speed));
-                    camera.setRotation(camera.rotation() + Math::toRadians(0.05));
+                    camera.setRotation(camera.rotation() + math::toRadians(0.05));
 
-                    steady_zoom_pct = (float)Math::lerpFactor(
+                    steady_zoom_pct = (float)math::lerpFactor(
                         toNormalizedZoom(camera.relativeZoom<f128>()),
                         toNormalizedZoom(state_a.camera.relativeZoom<f128>()),
                         toNormalizedZoom(state_b.camera.relativeZoom<f128>())
@@ -243,7 +243,7 @@ void Mandelbrot_Scene::updateTweening(double dt)
                 {
                     camera.setRelativeZoom(state_b.camera.relativeZoom<f128>());
                     tweening = false;
-                    queueEndRecording();
+                    endRecording();
                 }
             }
         }

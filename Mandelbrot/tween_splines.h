@@ -38,6 +38,11 @@ namespace MandelSplines
         {0.072f, 0.000f}, {0.500f, 0.000f}, {0.845f, 0.000f},
         {0.750f, 1.000f}, {1.000f, 1.000f}, {1.250f, 1.000f}
     });
+    static ImSpline::Spline stripe_zf_spline = ImSpline::Spline(100, {
+        {-0.48f,-0.13f}, {0.0f,0.0f},   {1.49f,0.33f},
+        {2.21f,0.07f},   {11.99f,0.2f}, {29.42f,0.43f},
+        {30.94f,0.45f},  {38.8f,0.56f}, {48.85f,0.7f}
+    });
 }
 
 SIM_END;

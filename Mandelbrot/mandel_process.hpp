@@ -4,6 +4,49 @@
 
 SIM_BEG;
 
+void Mandelbrot_Scene::processBatchSnapshot()
+{
+    if (rendering_examples)
+    {
+        if (!isSnapshotting())
+        {
+            // no active snapshot processing, check if there is one pending...
+
+            if (rendering_example_i >= mandel_presets.size())
+            {
+                // all examples rendered => end
+                rendering_examples = false;
+                rendering_example_i = 0;
+            }
+            else
+            {
+                // begin new snapshot...
+
+                // grab example name / state data
+                auto [key, data] = *std::next(mandel_presets.begin(), rendering_example_i);
+                std::string name = key.name;
+
+                // convert example name to lowercase for savefile, replace spaces with underscores
+                std::transform(name.begin(), name.end(), name.begin(), [](char ch) {
+                    return (ch == ' ') ? '_' : std::tolower(ch);
+                });
+
+                std::filesystem::path filepath = render_batch_name;
+                filepath /= name;
+
+                loadState(data);
+
+                SnapshotPresetList all_presets = main_window()->getSnapshotPresetManager()->allPresets();
+                SnapshotPresetList filtered    = all_presets.filtered(valid_presets);
+
+                beginSnapshotList(filtered, filepath.string().c_str());
+            }
+
+            rendering_example_i++;
+        }
+    }
+}
+
 void Mandelbrot_Scene::updateAnimation()
 {
     //if (Changed(show_color_animation_options, show_axis, gradient_shift_step, hue_shift_step))
@@ -11,23 +54,33 @@ void Mandelbrot_Scene::updateAnimation()
 
     double ani_mult = fpsFactor();
 
-    // ────── Progressing animation ──────
+    // ────── color cycle animation ──────
     if (!steady_zoom || capturedLastFrame())
     {
-        if (show_color_animation_options)
+        if (final_frame_complete)
         {
-            // Animation
-            if (fabs(gradient_shift_step) > 1.0e-4)
-                gradient_shift = Math::wrap(gradient_shift + gradient_shift_step * ani_mult, 0.0, 1.0);
+            if (show_color_animation_options)
+            {
+                // Animation
+                if (fabs(gradient_shift_step) > 1.0e-4)
+                    gradient_shift = math::wrap(gradient_shift + gradient_shift_step * ani_mult, 0.0, 1.0);
 
-            if (fabs(hue_shift_step) > 1.0e-4)
-                hue_shift = Math::wrap(hue_shift + hue_shift_step * ani_mult, 0.0, 360.0);
+                if (fabs(hue_shift_step) > 1.0e-4)
+                    hue_shift = math::wrap(hue_shift + hue_shift_step * ani_mult, 0.0, 360.0);
+            }
+            else
+            {
+                //if (Changed(gradient_shift, hue_shift, gradient_shift_step, hue_shift_step))
+                //    savefile_changed = true;
+            }
         }
-        else
-        {
-            //if (Changed(gradient_shift, hue_shift, gradient_shift_step, hue_shift_step))
-            //    savefile_changed = true;
-        }
+    }
+
+    // cardioid animation
+    if (!steady_zoom && show_interactive_cardioid && animate_cardioid_angle)
+    {
+        ani_angle += ani_inc;
+        ani_angle = math::wrapRadians2PI(ani_angle);
     }
 }
 
@@ -92,8 +145,8 @@ void Mandelbrot_Scene::updateCameraView()
             else
                 camera_vel_zoom = 1.0;
 
-            camera_vel_pos *= 0.8;
-            camera_vel_zoom += (1.0 - camera_vel_zoom) * 0.2; // Ease back to 1x
+            camera_vel_pos *= 0.8 / fpsFactor();
+            camera_vel_zoom += (1.0 - camera_vel_zoom) * std::min(1.0, 0.2 * fpsFactor()); // Ease back to 1x
         }
         #endif
     }
@@ -234,11 +287,6 @@ bool Mandelbrot_Scene::processCompute()
         //DQuad quad = ctx->worldQuad();
         //bool x_axis_visible = quad.intersects({ {quad.minX(), 0}, {quad.maxX(), 0} });
 
-        //if (kernel_mode == KernelMode::AUTO)
-        //    kernel_mode = (float_type >= FloatingPointType::F128) ? 
-        //else if (kernel_mode == KernelMode::FULL)
-        //    kernel_mode = false;
-        // 
         // Run appropriate kernel for given settings
         KernelMode deduced_kernel_mode = kernel_mode;
 
@@ -351,8 +399,7 @@ bool Mandelbrot_Scene::processCompute()
             break;
 
             case 2:
-                /// finished final 1x1 phase, permit capture of this frame
-                captureFrame(true);
+                /// finished final 1x1 phase
                 final_frame_complete = true;
 
                 //timer_end_group(ITER);
@@ -360,8 +407,8 @@ bool Mandelbrot_Scene::processCompute()
                 //timer_end_group(STRIPE);
                 //timer_end_group(ESCAPE);
                 //timer_end_group(REBASE);
-                timer_end_group(NORM_FIELD);
-                blPrint("\n");
+                //timer_end_group(NORM_FIELD);
+                //blPrint("\n");
 
                 auto elapsed = std::chrono::steady_clock::now() - compute_t0;
                 double dt = std::chrono::duration<double, std::milli>(elapsed).count();
@@ -376,6 +423,32 @@ bool Mandelbrot_Scene::processCompute()
     return finished_compute;
 }
 
+void Mandelbrot_Scene::processCapturing(bool finished_compute, bool reshade)
+{
+    if (final_frame_complete)
+    {
+        // just finished computing final 1x1 phase? Always permit capture of this frame
+        if (finished_compute)
+            permitCaptureFrame(true);
+
+        if (!steady_zoom)
+        {
+            // unless we're doing a deep-zoom, capture basic basic color-cycle animation every frame
+            if (reshade)
+                permitCaptureFrame(true);
+
+            // If animating the cardioid (and not doing a deep zoom) -> record frame
+            if (show_interactive_cardioid && animate_cardioid_angle)
+            {
+                if (isRecording())
+                    permitCaptureFrame(true);
+            }
+        }
+    }
+}
+
+
+
 bool Mandelbrot_Scene::mandelChanged()
 {
     bool view_changed            = Changed(world_quad);
@@ -384,6 +457,9 @@ bool Mandelbrot_Scene::mandelChanged()
     bool features_changed        = Changed(mandel_features);
     bool normalize_field_changed = Changed(normalize_field_quality, normalize_field_exponent, normalize_field_scale, normalize_field_precision);
     bool kernel_mode_changed     = Changed(kernel_mode);
+
+    //bool debug_opts_changed = Changed(stripe_mag_numerator, stripe_mag_from_hist);
+
     return (
         first_frame ||
         view_changed || 
@@ -391,17 +467,21 @@ bool Mandelbrot_Scene::mandelChanged()
         compute_opts_changed ||
         features_changed || 
         normalize_field_changed ||
-        kernel_mode_changed
+        kernel_mode_changed 
+        //|| debug_opts_changed
     );
 }
 
-bool Mandelbrot_Scene::shadingFormulaChanged()
+bool Mandelbrot_Scene::normalizationOptionsChanged()
 {
-    bool shade_formula_changed   = Changed(shade_formula);
-    bool weights_changed         = Changed(iter_weight, dist_weight, stripe_weight);
-    bool cycle_iter_opts_changed = Changed(iter_params);
-    bool cycle_dist_opts_changed = Changed(dist_params, dist_tone_params);
-    bool cycle_stripe_opts_changed = Changed(stripe_params.phase, stripe_tone_params);
+    bool weights_changed            = Changed(iter_weight, dist_weight, stripe_weight);
+    bool shade_formula_changed      = Changed(iter_x_dist_weight,       dist_x_stripe_weight,     stripe_x_iter_weight,
+                                              iter_x_distStripe_weight, dist_x_iterStripe_weight, stripe_x_iterDist_weight);
+
+    bool cycle_iter_opts_changed    = Changed(iter_params);
+    bool cycle_dist_opts_changed    = Changed(dist_params, dist_tone_params);
+    bool cycle_stripe_opts_changed  = Changed(stripe_params.phase, stripe_tone_params);
+
     return (shade_formula_changed || weights_changed || cycle_iter_opts_changed || cycle_dist_opts_changed || cycle_stripe_opts_changed);
 }
 

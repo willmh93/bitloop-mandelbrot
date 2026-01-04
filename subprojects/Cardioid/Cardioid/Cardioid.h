@@ -27,7 +27,7 @@ inline double cardioidSquaredDistance(double angle, double mx, double my)
 inline double originalAngleBinarySearch(double mx, double my)
 {
     double left = 0.0;
-    double right = 2.0 * Math::PI;
+    double right = 2.0 * math::pi;
     const double eps = 0.02;// 1e-13;
 
     while (right - left > eps)
@@ -89,9 +89,9 @@ inline double originalAngleFromPoint(
 
         // Wrap angle
         if (theta < 0)
-            theta += 2.0 * Math::PI;
-        else if (theta >= 2.0 * Math::PI)
-            theta -= 2.0 * Math::PI;
+            theta += 2.0 * math::pi;
+        else if (theta >= 2.0 * math::pi)
+            theta -= 2.0 * math::pi;
 
         // If the step is sufficiently small, we consider we've converged
         if (fabs(step) < tolerance)
@@ -120,8 +120,8 @@ inline void cardioidPolarCoord(
         return;
     }
 
-    orig_angle = Math::wrapRadians2PI(originalAngleFromPoint(px, py));
-    tangent_angle = Math::wrapRadians2PI(1.5 * orig_angle);
+    orig_angle = math::wrapRadians2PI(originalAngleFromPoint(px, py));
+    tangent_angle = math::wrapRadians2PI(1.5 * orig_angle);
     tangent_x = 0.5 * cos(orig_angle) - 0.25 * cos(orig_angle * 2.0);
     tangent_y = 0.5 * sin(orig_angle) - 0.25 * sin(orig_angle * 2.0);
 
@@ -148,7 +148,7 @@ inline DVec2 fromPolarCoordinate(double angle, double dist)
 {
     //double angle = (perp_angle + M_PI / 2.0) / 1.5;
     double tangent_angle = 1.5 * angle;
-    double perp_angle = tangent_angle - Math::PI / 2.0;
+    double perp_angle = tangent_angle - math::pi / 2.0;
     double tx = 0.5 * cos(angle) - 0.25 * cos(angle * 2.0);
     double ty = 0.5 * sin(angle) - 0.25 * sin(angle * 2.0);
     double px = tx + cos(perp_angle) * dist;
@@ -175,7 +175,7 @@ struct CardioidSegment : public DVec2
         CardioidSegment ret;
         ret.x = (a.x + (b.x - a.x) * ratio);
         ret.y = (a.y + (b.y - a.y) * ratio);
-        ret.angle = a.angle + Math::closestAngleDifference(a.angle, b.angle) * ratio;
+        ret.angle = a.angle + math::closestAngleDifference(a.angle, b.angle) * ratio;
         return ret;
     }
 };
@@ -224,7 +224,7 @@ struct CardioidLerper : public std::vector<LerpedCardioid>
         double old_plot_x = 0.25;
         double old_plot_y = 0.0;
         double old_segment_angle = 0.0;
-        int steps = static_cast<int>(round(Math::TWO_PI / angle_step));
+        int steps = static_cast<int>(round(math::tau / angle_step));
         double delta_angle;
         double delta_dist;
         double angle = 0.0;
@@ -236,7 +236,7 @@ struct CardioidLerper : public std::vector<LerpedCardioid>
             double dx = plot_x - old_plot_x;
             double dy = plot_y - old_plot_y;
             double segment_angle = atan2(dy, dx);
-            delta_angle = Math::closestAngleDifference(old_segment_angle, segment_angle);
+            delta_angle = math::closestAngleDifference(old_segment_angle, segment_angle);
             delta_dist = sqrt(dx * dx + dy * dy);
 
             ret.push_back({
@@ -347,7 +347,7 @@ struct CardioidLerper : public std::vector<LerpedCardioid>
         int i = nearestPoint(x, y, weight);
 
         const CardioidSegment& p = cardioid[i];
-        double angle = (i / (double)cardioid.size()) * (Math::TWO_PI);
+        double angle = (i / (double)cardioid.size()) * (math::tau);
         double tangent_angle = p.angle;
 
         double dx = x - p.x;
@@ -374,11 +374,11 @@ struct CardioidLerper : public std::vector<LerpedCardioid>
         const LerpedCardioid& b = at(cardioid_i1);
         double f_len = static_cast<double>(a.size());
 
-        double segment_i_ratio = angle / Math::TWO_PI;
+        double segment_i_ratio = angle / math::tau;
         int segment_i = static_cast<int>(segment_i_ratio * f_len);
 
         CardioidSegment ret = CardioidSegment::lerp(a[segment_i], b[segment_i], cardioid_lerp_ratio);
-        double perp_angle = ret.angle - Math::HALF_PI;
+        double perp_angle = ret.angle - math::half_pi;
         
         return {
             ret.x + cos(perp_angle) * dist,
@@ -399,16 +399,16 @@ struct Cardioid_Scene : public Scene<Cardioid_Scene>
     bool   animate = true;
 
     double ani_angle = 0.0;
-    double ani_inc = Math::toRadians(2.0);
+    double ani_inc = math::toRadians(2.0);
 
-    double interact_angle_step = Math::TWO_PI / 720.0;
+    double interact_angle_step = math::tau / 720.0;
     double interact_spin_mult = 1.0;
     double interact_angle = 0.0;
     double interact_dist = 0.0;
 
-    struct UI : Interface
+    struct UI : ViewModel
     {
-        using Interface::Interface;
+        using ViewModel::ViewModel;
         void sidebar();
     };
     

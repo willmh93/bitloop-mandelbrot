@@ -67,5 +67,109 @@ inline void shadingRatios(
     stripe_ratio = stripe_weight / sum;
 }
 
+/*
+
+A = lerp(iter, dist, 
+
+
+*/
+
+//inline float mixKernelFeatures(
+//    float iter, 
+//    float dist, 
+//    float stripe,
+//    float lerp_iter_dist,   // (iter * dist)   weight
+//    float lerp_iter_stripe, // (iter * stripe) weight
+//    float lerp_dist_stripe  // (dist * stripe) weight
+//)
+//{
+//    float base = iter + dist + stripe;
+//    float da = iter * dist   - iter - dist;
+//    float db = iter * stripe - iter - stripe;
+//    float dc = dist * stripe - dist - stripe;
+//
+//    return base
+//        + lerp_iter_dist * da
+//        + lerp_iter_stripe * db
+//        + lerp_dist_stripe * dc;
+//}
+
+///inline float mixKernelFeatures(
+///    float iter,
+///    float dist,
+///    float stripe,
+///    float lerp_iter_dist,   // (iter, dist)   pair
+///    float lerp_iter_stripe, // (iter, stripe) pair
+///    float lerp_dist_stripe  // (dist, stripe) pair
+///)
+///{
+///    float a = iter;
+///    float b = dist;
+///    float c = stripe;
+///
+///    float base = a + b + c;
+///
+///    // _ChatGPT_ Pairwise "multiply vs add" corrections
+///    float da = a * b - a - b; // for (iter, dist)
+///    float db = a * c - a - c; // for (iter, stripe)
+///    float dc = b * c - b - c; // for (dist, stripe)
+///
+///    float wa = lerp_iter_dist;
+///    float wb = lerp_iter_stripe;
+///    float wc = lerp_dist_stripe;
+///
+///    // _ChatGPT_ Triple corrections (derived, not extra user controls)
+///    // _ChatGPT_ Activates near iter*(dist+stripe)
+///    float ga = std::max(0.0f, lerp_iter_dist + lerp_iter_stripe - 1.0f);
+///
+///    // _ChatGPT_ Activates near (iter+dist)*stripe
+///    float gc = std::max(0.0f, lerp_iter_stripe + lerp_dist_stripe - 1.0f);
+///
+///    return base
+///        + lerp_iter_dist   * da
+///        + lerp_iter_stripe * db
+///        + wc * dc
+///        + ga * a   // fix for a*(b + c)
+///        + gc * c;  // fix for (a + b)*c
+///}
+
+inline float mixKernelFeatures(
+    float iter,
+    float dist,
+    float stripe,
+    float iter_x_dist_weight,
+    float dist_x_stripe_weight,
+    float stripe_x_iter_weight,
+    float iter_x_distStripe_weight,
+    float dist_x_iterStripe_weight,
+    float stripe_x_iterDist_weight)
+{
+    // _ChatGPT_ Common base: pure additive mix
+    float base = iter + dist + stripe;
+
+    // _ChatGPT_ Common products
+    float iter_dist = iter * dist;
+    float dist_stripe = dist * stripe;
+    float stripe_iter = stripe * iter; // same as iter * stripe
+
+    // _ChatGPT_ Pairwise "product vs sum" deltas (pair product + third additive)
+    float d_iter_x_dist = iter_dist - iter - dist;   // (iter * dist + stripe)  - base
+    float d_dist_x_stripe = dist_stripe - dist - stripe; // (dist * stripe + iter)  - base
+    float d_stripe_x_iter = stripe_iter - stripe - iter; // (stripe * iter + dist)  - base
+
+    // _ChatGPT_ Triple "sum-then-multiply" deltas
+    float d_iter_x_distStripe = (iter_dist + stripe_iter) - base; // iter * (dist + stripe)  - base
+    float d_dist_x_iterStripe = (iter_dist + dist_stripe) - base; // dist * (iter + stripe)  - base
+    float d_stripe_x_iterDist = (stripe_iter + dist_stripe) - base; // stripe * (iter + dist)  - base
+
+    return base
+        + iter_x_dist_weight * d_iter_x_dist
+        + dist_x_stripe_weight * d_dist_x_stripe
+        + stripe_x_iter_weight * d_stripe_x_iter
+        + iter_x_distStripe_weight * d_iter_x_distStripe
+        + dist_x_iterStripe_weight * d_dist_x_iterStripe
+        + stripe_x_iterDist_weight * d_stripe_x_iterDist;
+}
+
 
 SIM_END;

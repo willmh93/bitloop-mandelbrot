@@ -1,4 +1,4 @@
-# vcpkg_autodetect.cmake
+﻿# vcpkg_autodetect.cmake
 #    - Searches for an existing vcpkg in the current directory/workspace
 #    - If one isn't found, it clones vcpkg at a pinned <sha>
 #    - Also picks a location for shared binary sources/cache to avoid unnecessary rebuilds
@@ -156,22 +156,32 @@ endif()
 
 
 message(STATUS "")
-message(STATUS "-------------- Searching for vcpkg --------------")
+message(STATUS "─────────────────────────────────────── Workspace ───────────────────────────────────────")
 message(STATUS "WORKSPACE_DIR:          ${WORKSPACE_DIR}")
 message(STATUS "IS_ROOT_WORKSPACE:      ${IS_ROOT_WORKSPACE}")
 message(STATUS "FOUND_WORKSPACE:        ${FOUND_WORKSPACE}")
-message(STATUS "FOUND_WORKSPACE_VCPKG:  ${FOUND_WORKSPACE_VCPKG}")
-message(STATUS "FOUND_LOCAL_VCPKG:      ${FOUND_LOCAL_VCPKG}")
-message(STATUS "-------------------------------------------------")
+
+if (FOUND_WORKSPACE_VCPKG)
+    message(STATUS "FOUND_WORKSPACE_VCPKG:  TRUE (${WORKSPACE_VCPKG_DIR})")
+else()
+    message(STATUS "FOUND_WORKSPACE_VCPKG:  FALSE")
+endif()
+
+if (FOUND_LOCAL_VCPKG)
+    message(STATUS "FOUND_LOCAL_VCPKG:      TRUE (${LOCAL_VCPKG_PATH})")
+else()
+    message(STATUS "FOUND_LOCAL_VCPKG:      FALSE")
+endif()
+
+message(STATUS "─────────────────────────────────────────────────────────────────────────────────────────")
 message(STATUS "")
 
 if (FOUND_WORKSPACE)
-    if (FOUND_WORKSPACE_VCPKG)
-        message(STATUS "Found existing workspace vcpkg: ${WORKSPACE_VCPKG_DIR}")
-    else()
+    if (NOT FOUND_WORKSPACE_VCPKG)
         message(STATUS "Cloning vcpkg in to workspace")
         clone_vcpkg(${WORKSPACE_VCPKG_DIR} ${VCPKG_PINNED_SHA})
     endif()
+
     set(_vcpkg_dir ${WORKSPACE_VCPKG_DIR})
 
     if (FOUND_UNUSED_LOCAL_VCPKG)
@@ -179,14 +189,10 @@ if (FOUND_WORKSPACE)
         message(STATUS "Consider removing the local vcpkg/cache")
     endif()
 
-elseif (FOUND_LOCAL_VCPKG)
-    message(STATUS "Found existing local vcpkg: ${LOCAL_VCPKG_DIR}")
-
-else()
+elseif (NOT FOUND_LOCAL_VCPKG)
     message(STATUS "No vcpkg found - cloning local vcpkg")
     clone_vcpkg(${LOCAL_VCPKG_DIR} ${VCPKG_PINNED_SHA})
     set(_vcpkg_dir ${LOCAL_VCPKG_DIR})
-
 endif()
 
 
@@ -209,6 +215,101 @@ set(ENV{VCPKG_DEFAULT_BINARY_CACHE}  "${_cache_dir}")
 set(ENV{VCPKG_BINARY_SOURCES}        "clear;files,${_cache_dir},readwrite")
 set(ENV{VCPKG_DEFAULT_BINARY_CACHE}  "${_vcpkg_dir}/../.vcpkg-cache")
 
+
+
+# ---- Manifest Compiler (merge child vcpkg.json into one generated manifest) ----
+
+set(BL_MERGED_MANIFEST_DIR "${CMAKE_BINARY_DIR}/_vcpkg_merged")
+
+file(MAKE_DIRECTORY "${BL_MERGED_MANIFEST_DIR}")
+
+# Avoid recursion if this toolchain loader is hit during the discovery configure.
+if (DEFINED BITLOOP_INTERNAL_DISCOVERY_RUN AND BITLOOP_INTERNAL_DISCOVERY_RUN)
+    set(BL_CHILD_MANIFESTS "")
+else()
+    message(STATUS "Running bitloop project discovery phase")
+
+    set(_bl_discovery_build_dir "${CMAKE_BINARY_DIR}/_bitloop_discovery")
+    set(_bl_discovery_out_file  "${_bl_discovery_build_dir}/discovered_manifests.cmake")
+
+    file(MAKE_DIRECTORY "${_bl_discovery_build_dir}")
+
+    set(_bl_discovery_toolchain "${_root_dir}/tooling/cmake/toolchain/discovery_toolchain.cmake")
+
+    set(_cmd
+        ${CMAKE_COMMAND}
+        -S ${_root_dir}
+        -B ${_bl_discovery_build_dir}
+        -DBITLOOP_DISCOVERY=ON
+        -DBITLOOP_INTERNAL_DISCOVERY_RUN=1
+        -DBITLOOP_DISCOVERY_OUT=${_bl_discovery_out_file}
+        -DCMAKE_TOOLCHAIN_FILE=${_bl_discovery_toolchain}
+    )
+
+    # Preserve generator/toolset/platform so the discovery configure matches the real one.
+    if (CMAKE_GENERATOR)
+        list(APPEND _cmd -G "${CMAKE_GENERATOR}")
+    endif()
+    if (CMAKE_GENERATOR_PLATFORM)
+        list(APPEND _cmd -A "${CMAKE_GENERATOR_PLATFORM}")
+    endif()
+    if (CMAKE_GENERATOR_TOOLSET)
+        list(APPEND _cmd -T "${CMAKE_GENERATOR_TOOLSET}")
+    endif()
+
+    # Preserve triplet
+    if (DEFINED VCPKG_TARGET_TRIPLET AND NOT VCPKG_TARGET_TRIPLET STREQUAL "")
+        list(APPEND _cmd -DVCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET})
+    endif()
+
+    execute_process(COMMAND ${_cmd} RESULT_VARIABLE _r)
+    if (NOT _r EQUAL 0)
+        message(FATAL_ERROR "Bitloop discovery configure failed (code=${_r}).\nCommand: ${_cmd}")
+    endif()
+
+    if (NOT EXISTS "${_bl_discovery_out_file}")
+        message(FATAL_ERROR "Bitloop: discovery output missing: ${_bl_discovery_out_file}")
+    endif()
+
+    include("${_bl_discovery_out_file}") # -> defines BL_CHILD_MANIFESTS
+
+    if (BL_CHILD_MANIFESTS)
+        list(REMOVE_DUPLICATES BL_CHILD_MANIFESTS)
+        list(SORT BL_CHILD_MANIFESTS)
+    endif()
+endif()
+
+
+# Guard against try-compile / foreign superprojects:
+# Only run when the current top-level source dir is your repo root.
+if(NOT "${CMAKE_SOURCE_DIR}" STREQUAL "${_root_dir}")
+  return()
+endif()
+
+# Ensure we only do this once per configure
+if(DEFINED BL_VCPKG_MERGED_MANIFEST_DONE)
+  return()
+endif()
+set(BL_VCPKG_MERGED_MANIFEST_DONE 1)
+
+set(BL_MERGED_MANIFEST_DIR "${CMAKE_BINARY_DIR}/_vcpkg_merged")
+file(MAKE_DIRECTORY "${BL_MERGED_MANIFEST_DIR}")
+
+# BL_CHILD_MANIFESTS already prepared by you
+
+include("${_root_dir}/tooling/cmake/toolchain/merge_vcpkg_manifests.cmake")
+bl_merge_vcpkg_manifests(
+  ROOT_MANIFEST   "${_root_dir}/vcpkg.json"
+  CHILD_MANIFESTS "${BL_CHILD_MANIFESTS}"
+  OUT_DIR         "${BL_MERGED_MANIFEST_DIR}"
+  MODE            "UNION"
+)
+
+# Point vcpkg at the generated manifest (must be set before including vcpkg.cmake)
+set(VCPKG_MANIFEST_DIR "${BL_MERGED_MANIFEST_DIR}" CACHE PATH "" FORCE)
+set(VCPKG_MANIFEST_INSTALL ON CACHE BOOL "" FORCE)
+
+
 # Finally, load vcpkg toolchain
-message(STATUS "Using vcpkg at: ${_vcpkg_dir}")
+#message(STATUS "Using vcpkg at: ${_vcpkg_dir}")
 include("${_vcpkg_dir}/scripts/buildsystems/vcpkg.cmake")

@@ -62,10 +62,10 @@ struct DistParams
 
 struct StripeParams
 {
-    float freq = 3.0; // stripes per 2 pi
+    int freq = 3; // stripes per 2 pi
     float phase = 0.0; // radians
 
-    StripeParams(float _freq = 8.0f, float _phase = 0.0f)
+    StripeParams(int _freq = 8, float _phase = 0.0f)
         : freq(_freq), phase(_phase)
     {}
 
@@ -82,7 +82,10 @@ struct StripeAccum
     f32 last_cos = 0.0f;
 
     f64 log_r2_at_escape = 0.0;
-    bool   escaped = false;
+    bool escaped = false;
+
+    StripeAccum() : n(1) {}
+    StripeAccum(int freq) : n(freq) {}
 
     void accumulate(f32 c, f32 s)
     {
@@ -131,11 +134,27 @@ inline float stripeFromAccum(const StripeAccum& st, double log_er2, float cphi, 
     float mix = frac * avg + (1.0f - frac) * prev;
 
     // contrast shaping
-    mix = 0.5f + 0.5f * std::tanh(/*p.contrast **/(mix - 0.5f));
-    ///mix = 0.5f + 0.5f * std::tanh(p.contrast * (mix - 0.5f));
+    mix = 0.5f + 0.5f * std::tanh((mix - 0.5f));
     if (mix < 0.0f) mix = 0.0f; else if (mix > 1.0f) mix = 1.0f;
     return mix;
 }
+
+inline float stripeFromAccum_Newton(const StripeAccum& st, float cphi, float sphi)
+{
+    if (st.W <= 0) return 0.0f;
+
+    float invW = 1.0f / (float)st.W;
+    float avg = 0.5f + 0.5f * ((st.sum_sin * invW) * cphi +
+        (st.sum_cos * invW) * sphi);
+
+    // gentle shaping instead of strong tanh:
+    float mix = avg;
+    // optional mild contrast:
+    // mix = 0.5f + 0.5f * std::tanh(params.contrast * (mix - 0.5f));
+
+    return std::clamp(mix, 0.0f, 1.0f);
+}
+
 
 #if MANDEL_EXTENDED_FIELD_STATS
 struct ExtendedFieldStats
@@ -246,8 +265,6 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
         resize(w * h, { -1.0, -1.0 });
         skip_flags.resize(w * h, 0);
     }
-
-
 
     EscapeFieldPixel& operator ()(int x, int y)
     {
@@ -514,7 +531,7 @@ public:
 
     void setShape(double sample_r, double exponent)
     {
-        local_field = Math::delaunayMeshEllipse<f64>(0, 0, 1.0, sample_r, exponent);
+        local_field = math::delaunayMeshEllipse<f64>(0, 0, 1.0, sample_r, exponent);
         world_field.resize(local_field.size());
     }
 
@@ -529,9 +546,6 @@ public:
         bounds.setCamera(camera);
         bounds.setWorldRect(cam_center_world - world_radius, world_radius * 2);
         DQuad stage_quad = bounds.stageQuad();
-
-        blPrint() << "camera.relativeZoom<T>(): " << camera.relativeZoom<T>();
-        blPrint() << "WORLD R: " << world_radius;
 
         for (size_t i=0; i< world_field.size(); i++)
         {

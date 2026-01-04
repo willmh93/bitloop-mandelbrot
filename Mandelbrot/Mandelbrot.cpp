@@ -1,6 +1,8 @@
 
 #include "Mandelbrot.h"
 #include "mandel_process.hpp"
+#include "history.hpp"
+#include "experimental.h"
 
 SIM_BEG;
 
@@ -21,7 +23,7 @@ void Mandelbrot_Scene::sceneStart()
     // todo: Stop this getting called twice on startup
     generateGradientFromPreset(gradient, GradientPreset::CLASSIC);
 
-    cardioid_lerper.create(Math::TWO_PI / 5760.0, 0.005);
+    cardioid_lerper.create(math::tau / 5760.0, 0.005);
 
     font = NanoFont::create("/data/fonts/DroidSans.ttf");
 }
@@ -47,7 +49,7 @@ void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
 
     navigator.setTarget(camera);
     navigator.setDirectCameraPanning(true);
-    //camera->restrictRelativeZoomRange(0.5, 1e+300);
+    navigator.restrictRelativeZoomRange(0.0001, 5.0e28);
 
     #ifdef __EMSCRIPTEN__
     // If URL has encoded state data, load on startup
@@ -61,13 +63,18 @@ void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
         if (!data_buf.empty())
             loadConfigBuffer();
     }*/
+
+    history.push_back({ 0, serialize() });
 }
 
 void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
 {
-    /// Never record a frame unless we finish computing a full frame
-    captureFrame(false);
+    // ────── disable capture this frame, re-enable depending on mode ──────
+    permitCaptureFrame(false);
 
+    // if "Render All" was clicked, call beginSnapshot() for each preset until done
+    processBatchSnapshot();
+    
     // ────── automatic updates (animation / tweening) ──────
     updateAnimation();
     updateTweening(dt);
@@ -78,63 +85,55 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     updateEnabledKernelFeatures();
     updateActivePhaseAndField();
 
-    // ────── compute ──────
+    // ────── compute unnormalized field values (ITER, DIST, STRIPE) ──────
     bool finished_compute = false;
     if (!final_frame_complete)
     {
-        // compute the unnormalized base data needed for the normalization/reshading stages
         finished_compute = processCompute();
     }
-
-    // ────── color cycle changed? ──────
+    
+    // ────── check if renormalizing / reshading ──────
     bool gradient_changed = updateGradient();
-    bool shading_formula_changed = shadingFormulaChanged();
+    bool normalization_opts_changed = normalizationOptionsChanged();
 
-    bool renormalize = finished_compute || shading_formula_changed;
+    bool renormalize = finished_compute || normalization_opts_changed;
     bool reshade = renormalize || (gradient_changed && frame_complete);
 
-
-    // ────── renormalize cached data if necessary  ──────
+    // ────── renormalize if flagged  ──────
     if (renormalize)
     {
         FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
         bool normalize_depth = iter_params.cycle_iter_normalize_depth;
         bool invert_dist = dist_params.cycle_dist_invert;
 
-        table_invoke(dispatch_table(calculate_normalize_info), float_type, mandel_features, normalize_depth, invert_dist);
+        table_invoke(dispatch_table(calculate_normalize_info), float_type, mandel_features);
         table_invoke(dispatch_table(normalize_field),          float_type, mandel_features, normalize_depth, invert_dist);
     }
 
-    // ────── reshade if data renormalized, or gradient changed ──────
+    // ────── reshade if flagged ──────
     if (reshade)
-    {
-        table_invoke(dispatch_table(shadeBitmap), (MandelShaderFormula)shade_formula, maxdepth_show_optimized);
-    }
+        table_invoke(dispatch_table(shadeBitmap), maxdepth_show_optimized);
 
-    // unless we're doing a steady-zoom animation, capture basic animated shading every frame
-    if (!steady_zoom && reshade && final_frame_complete)
-        captureFrame(true);
+    // check if we should permit frame capture (snapshot/record) - condition varies depending on mode
+    processCapturing(finished_compute, reshade);
 
-    first_frame = false;
-
-    if (!steady_zoom && show_interactive_cardioid && animate_cardioid_angle)
-    {
-        // Cardioid animation
-        ani_angle += ani_inc;
-        ani_angle = Math::wrapRadians2PI(ani_angle);
-
-        // If not tweening and we're animating the cardioid -> record frame
-        if (isRecording())
-            captureFrame(true);
-    }
+    // undo/redo logic
+    if (!platform()->is_mobile())
+        processUndoRedo(normalization_opts_changed);
 
     // Gather stats / realtime info
     collectStats(renormalize);
 
+    #if MANDEL_EXPERIMENTAL_TESTS
+    processExperimental();
+    #endif
+
+    first_frame = false;
 }
 
 void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
 {
+    // apply 128-bit camera world transformation
     ctx->setTransform(camera.getTransform());
 
     // Draw active phase bitmap
@@ -150,6 +149,7 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
     if (show_axis && zoom_mag < 1.0e7)
         ctx->drawWorldAxis(0.5, 0, 0.5);
 
+    // if "Normalization Sampling" -> "Preview" ticked
     if (preview_normalization_field)
     {
         ctx->stageMode();
@@ -162,6 +162,10 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
 		ctx->worldMode();
     }
 
+    #if MANDEL_EXPERIMENTAL_TESTS
+    drawExperimental(ctx);
+    #endif
+    
     #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
     if (show_interactive_cardioid && zoom_mag < 1000000.0)
     {
@@ -173,7 +177,7 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
 
             /// Interesting...
             /// for (double m=0; m<=1.0; m+=0.01)
-            /// Cardioid::animatePlot(this, ctx, 1.0, 0.0, Math::PI*m);
+            /// Cardioid::animatePlot(this, ctx, 1.0, 0.0, math::pi*m);
         }
         else
         {
@@ -222,7 +226,7 @@ void Mandelbrot_Scene::onEvent(Event e)
 {
     if (!this->ownsEvent(e))
         return;
-
+    
     #ifdef BL_RELEASE
     // don't permit world navigation while tweening
     if (tweening || isRecording())
@@ -268,6 +272,11 @@ void Mandelbrot_Scene::onEvent(Event e)
         avg_vel_zoom.clear();
         avg_vel_pos.clear();
     }
+}
+
+void Mandelbrot_Scene::onKeyDown(KeyEvent e)
+{
+    historyKeyEvent(e);
 }
 
 SIM_END;
