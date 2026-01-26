@@ -1,5 +1,7 @@
 #pragma once
 #include <bitloop.h>
+#include <array>
+#include <string_view>
 #include "shading.h"
 #include "gradient.h"
 #include "mandel_field.h"
@@ -10,47 +12,60 @@ using namespace bl;
 
 struct MandelState
 {
+    // brotli dictionaries (versioned)
+    static std::span<const std::string_view> getDictionaryTokens(int v);
+    static const compression::BrotliDict*    getDictionary(int v);
+
     /// ─────────────────────── Saveable Info ───────────────────────
 
-    CameraInfo   camera;
+    CameraInfo       camera;
+                     
+    bool             show_axis                      = true;
+    bool             dynamic_iter_lim               = true;
+    double           quality                        = 0.5; // Used for UI (ignored during tween, represents iter_lim OR % of iter_lim)
+    int              interior_forwarding            = (int)MandelInteriorForwarding::MEDIUM;
+                                                    
+    bool             use_smoothing                  = true;
+                     
+    double           iter_weight                    = 1.0;
+    double           dist_weight                    = 0.0;
+    double           stripe_weight                  = 0.0;
+                     
+    float            iter_x_dist_weight             = 0.0f; // (iter * dist) + stripe
+    float            dist_x_stripe_weight           = 0.0f; // (dist * stripe) + iter
+    float            stripe_x_iter_weight           = 0.0f; // (stripe * iter) + dist
+    float            iter_x_distStripe_weight       = 0.0f; // iter * (dist + stripe)
+    float            dist_x_iterStripe_weight       = 0.0f; // dist * (iter + stripe)
+    float            stripe_x_iterDist_weight       = 0.0f; // stripe * (iter + dist)
 
-    bool         show_axis                      = true;
-    bool         dynamic_iter_lim               = true;
-    double       quality                        = 0.5; // Used for UI (ignored during tween, represents iter_lim OR % of iter_lim)
-    int          interior_forwarding            = (int)MandelInteriorForwarding::MEDIUM;
-                                                
-    bool         use_smoothing                  = true;
-                 
-    double       iter_weight                    = 1.0;
-    double       dist_weight                    = 0.0;
-    double       stripe_weight                  = 0.0;
-
-    float        iter_x_dist_weight             = 0.0f; // (iter * dist) + stripe
-    float        dist_x_stripe_weight           = 0.0f; // (dist * stripe) + iter
-    float        stripe_x_iter_weight           = 0.0f; // (stripe * iter) + dist
-    float        iter_x_distStripe_weight       = 0.0f; // iter * (dist + stripe)
-    float        dist_x_iterStripe_weight       = 0.0f; // dist * (iter + stripe)
-    float        stripe_x_iterDist_weight       = 0.0f; // stripe * (iter + dist)
+    std::string shader_source_txt =
+        "vec4 userShade(float iter, float dist, float stripe, vec2 uv)\n{\n"
+        "    return sampleGradient(wrap01(iter + dist + stripe));\n"
+        "}";
+                     
+    IterParams       iter_params;                              
+    DistParams       dist_params;
+    StripeParams     stripe_params;
     
-    IterParams   iter_params;                              
-    DistParams   dist_params;
-    StripeParams stripe_params;
-    
-    PivotToneParams dist_tone_params;
-    PivotToneParams stripe_tone_params;
+    PivotToneParams  dist_tone_params;
+    PivotToneParams  stripe_tone_params;
 
-    double       gradient_shift                 = 0.0;
-    double       hue_shift                      = 0.0;
-                                                
-    double       gradient_shift_step            = 0.0078;
-    double       hue_shift_step                 = 0.136;
+    double           gradient_shift                 = 0.0;
+    double           hue_shift                      = 0.0;
+                                                    
+    double           gradient_shift_step            = 0.0078;
+    double           hue_shift_step                 = 0.136;
+    float            phase_step                     = 0.0f;
                
-    //int          shade_formula = (int)MandelShaderFormula::ITER_DIST_STRIPE;
+    //int            shade_formula = (int)MandelShaderFormula::ITER_DIST_STRIPE;
 
-    ImGradient   gradient;
+    ImGradient       gradient;
     
     // animate   
-    bool         show_color_animation_options   = false;
+    //bool           show_color_animation_options = false;
+    bool             animate_gradient_shift = false;
+    bool             animate_gradient_hue = false;
+    bool             animate_stripe_phase = false;
     
     // Flatten   
     bool         flatten = false;
@@ -101,6 +116,10 @@ private:
             s.dist_x_iterStripe_weight = 0.0f;
             s.stripe_x_iterDist_weight = 0.0f;
 
+            s.shader_source_txt = 
+                "// @pass base\n"
+                "return sampleGradient(wrap01(iter + dist + stripe));\n";
+
             s.iter_params.cycle_iter_dynamic_limit = false;
             s.iter_params.cycle_iter_normalize_depth = false;
             s.iter_params.cycle_iter_log1p_weight = false;
@@ -126,9 +145,13 @@ private:
 
             s.gradient_shift_step = 0.0078;
             s.hue_shift_step = 0.136;
+            s.phase_step = math::toRadians(1.0f);
 
             generateGradientFromPreset(s.gradient, GradientPreset::CLASSIC);
-            s.show_color_animation_options = false;
+            //s.show_color_animation_options = false;
+            s.animate_gradient_shift = false;
+            s.animate_gradient_hue = false;
+            s.animate_stripe_phase = false;
 
             s.normalize_field_scale = 2.0;
             s.normalize_field_quality = 0.1;

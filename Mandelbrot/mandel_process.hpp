@@ -10,9 +10,10 @@ void Mandelbrot_Scene::processBatchSnapshot()
     {
         if (!isSnapshotting())
         {
-            // no active snapshot processing, check if there is one pending...
+            const auto& examples = bookmark_manager.find("Examples").getItems();
 
-            if (rendering_example_i >= mandel_presets.size())
+            ///// no active snapshot processing, check if there is one pending...
+            if (rendering_example_i >= examples.size())
             {
                 // all examples rendered => end
                 rendering_examples = false;
@@ -21,27 +22,26 @@ void Mandelbrot_Scene::processBatchSnapshot()
             else
             {
                 // begin new snapshot...
-
+            
                 // grab example name / state data
-                auto [key, data] = *std::next(mandel_presets.begin(), rendering_example_i);
-                std::string name = key.name;
+                const auto& example = examples[rendering_example_i];
 
-                // convert example name to lowercase for savefile, replace spaces with underscores
-                std::transform(name.begin(), name.end(), name.begin(), [](char ch) {
-                    return (ch == ' ') ? '_' : std::tolower(ch);
-                });
-
+                const std::string& data = example.data;
+                const std::string name = example.thumbName();
+           
                 std::filesystem::path filepath = render_batch_name;
-                filepath /= name;
-
+                filepath /= name + "_%s";
+            
                 loadState(data);
-
-                SnapshotPresetList all_presets = main_window()->getSnapshotPresetManager()->allPresets();
-                SnapshotPresetList filtered    = all_presets.filtered(valid_presets);
-
+            
+                SnapshotPresetList all_presets = main_window()->getSettingsConfig()->enabledImagePresets();
+                SnapshotPresetList filtered    = ignore_preset_filters ?
+                    all_presets : 
+                    all_presets.filtered(valid_presets);
+            
                 beginSnapshotList(filtered, filepath.string().c_str());
             }
-
+            
             rendering_example_i++;
         }
     }
@@ -59,20 +59,32 @@ void Mandelbrot_Scene::updateAnimation()
     {
         if (final_frame_complete)
         {
-            if (show_color_animation_options)
+            //if (show_color_animation_options)
             {
                 // Animation
-                if (fabs(gradient_shift_step) > 1.0e-4)
-                    gradient_shift = math::wrap(gradient_shift + gradient_shift_step * ani_mult, 0.0, 1.0);
+                if (animate_gradient_shift)
+                {
+                    if (fabs(gradient_shift_step) > 1.0e-4)
+                        gradient_shift = math::wrap(gradient_shift + gradient_shift_step * ani_mult, 0.0, 1.0);
+                }
 
-                if (fabs(hue_shift_step) > 1.0e-4)
-                    hue_shift = math::wrap(hue_shift + hue_shift_step * ani_mult, 0.0, 360.0);
+                if (animate_gradient_hue)
+                {
+                    if (fabs(hue_shift_step) > 1.0e-4)
+                        hue_shift = math::wrap(hue_shift + hue_shift_step * ani_mult, 0.0, 360.0);
+                }
+
+                if (animate_stripe_phase)
+                {
+                    if (fabs(phase_step) > 1.0e-4)
+                        stripe_params.phase = math::wrap(stripe_params.phase + phase_step * (f32)ani_mult, 0.0f, math::tau_f);
+                }
             }
-            else
-            {
-                //if (Changed(gradient_shift, hue_shift, gradient_shift_step, hue_shift_step))
-                //    savefile_changed = true;
-            }
+            //else
+            //{
+            //    //if (Changed(gradient_shift, hue_shift, gradient_shift_step, hue_shift_step))
+            //    //    savefile_changed = true;
+            //}
         }
     }
 
@@ -89,8 +101,8 @@ bool Mandelbrot_Scene::updateGradient()
     if (first_frame || Changed(gradient, gradient_shift, hue_shift))
     {
         transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
-        //savefile_changed = true;
-        ///colors_updated = true;
+        gradient_tex.set(gradient_shifted);
+
         return true;
     }
     return false;
@@ -255,9 +267,9 @@ void Mandelbrot_Scene::updateActivePhaseAndField()
     {
         switch (computing_phase)
         {
-        case 0:  pending_bmp = &bmp_9x9;  pending_field = &field_9x9;  break;
-        case 1:  pending_bmp = &bmp_3x3;  pending_field = &field_3x3;  break;
-        case 2:  pending_bmp = &bmp_1x1;  pending_field = &field_1x1;  break;
+        case 0:  pending_bmp = &bmp_9x9;  pending_field = &field_9x9;  /*pending_shaded = &shaded_9x9;*/ break;
+        case 1:  pending_bmp = &bmp_3x3;  pending_field = &field_3x3;  /*pending_shaded = &shaded_3x3;*/ break;
+        case 2:  pending_bmp = &bmp_1x1;  pending_field = &field_1x1;  /*pending_shaded = &shaded_1x1;*/ break;
         }
     }
 }
@@ -319,6 +331,9 @@ bool Mandelbrot_Scene::processCompute()
         // Finished computing pending_field, set as active field and use for future color updates
         active_bmp = pending_bmp;
         active_field = pending_field;
+        //active_shaded = pending_shaded;
+
+        active_phase = computing_phase;
 
         // ======== Result forwarding ========
         switch (computing_phase) {

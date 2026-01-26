@@ -10,6 +10,7 @@ endif()
 
 # Gather source files for this project
 file(GLOB SIM_SOURCES CONFIGURE_DEPENDS
+	"Mandelbrot/external/*.cpp"
 	"Mandelbrot/*.cpp"
 	"Mandelbrot/*.hpp"
 	"Mandelbrot/*.h"
@@ -25,8 +26,8 @@ bitloop_finalize()
 
 # ----- configure project packages/compile/link options -----
 
-find_package(zfp CONFIG REQUIRED)
-target_link_libraries(Mandelbrot PRIVATE zfp::zfp)
+#find_package(zfp CONFIG REQUIRED)
+#target_link_libraries(Mandelbrot PRIVATE zfp::zfp)
 
 if (MSVC)
   target_compile_options(Mandelbrot PRIVATE /bigobj)

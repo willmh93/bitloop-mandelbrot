@@ -20,17 +20,36 @@ void Mandelbrot_Scene::sceneStart()
 {
     Thread::setMaxThreads(MAX_THREADS);
 
+    SnapshotPresetList& all_presets = main_window()->getSnapshotPresetManager()->allPresets();
+    valid_presets.clear();
+    for (const auto& preset : all_presets)
+        valid_presets[preset.hashedAlias()] = true;
+
     // todo: Stop this getting called twice on startup
     generateGradientFromPreset(gradient, GradientPreset::CLASSIC);
 
     cardioid_lerper.create(math::tau / 5760.0, 0.005);
 
     font = NanoFont::create("/data/fonts/DroidSans.ttf");
+
+    createShaderPasses(init_shader_source, pass_surfaces);
 }
 
 void Mandelbrot_Scene::sceneDestroy()
 {
     blPrint() << "Mandelbrot_Scene::sceneDestroy()";
+
+    main_window()->deferredGuiDestructionQueue().enqueue([&]() noexcept
+    {
+        if (black1x1Tex != 0) 
+            glDeleteTextures(1, &black1x1Tex);
+
+        field_1x1.destroyFeaturesTexture();
+        field_3x3.destroyFeaturesTexture();
+        field_9x9.destroyFeaturesTexture();
+
+        gradient_tex.destroy();
+    });
 }
 
 void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
@@ -40,7 +59,7 @@ void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
     //camera->setCameraStageSnappingSize(1);
     camera.setSurface(ctx);
     camera.setOriginViewportAnchor(Anchor::CENTER);
-    camera.focusWorldRect(-2, -1.25, 1, 1.25);
+    camera.focusWorldRect(-2.25, -1.25, 0.75, 1.25);
     camera.uiSetCurrentAsDefault();
 
     bmp_9x9.setCamera(camera);
@@ -96,8 +115,8 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     bool gradient_changed = updateGradient();
     bool normalization_opts_changed = normalizationOptionsChanged();
 
-    bool renormalize = finished_compute || normalization_opts_changed;
-    bool reshade = renormalize || (gradient_changed && frame_complete);
+    renormalize = finished_compute || normalization_opts_changed;
+    reshade = renormalize || (gradient_changed && frame_complete);
 
     // ────── renormalize if flagged  ──────
     if (renormalize)
@@ -107,19 +126,22 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
         bool invert_dist = dist_params.cycle_dist_invert;
 
         table_invoke(dispatch_table(calculate_normalize_info), float_type, mandel_features);
-        table_invoke(dispatch_table(normalize_field),          float_type, mandel_features, normalize_depth, invert_dist);
+        table_invoke(dispatch_table(normalize_field),          float_type, mandel_features, normalize_depth, invert_dist, maxdepth_show_optimized);
     }
 
     // ────── reshade if flagged ──────
-    if (reshade)
-        table_invoke(dispatch_table(shadeBitmap), maxdepth_show_optimized);
+    if (Changed(shader_source_txt))
+    {
+        createShaderPasses(shader_source_txt, pass_surfaces);
+        reshade = true;
+    }
 
-    // check if we should permit frame capture (snapshot/record) - condition varies depending on mode
+    // check if we should permit frame capture on next draw (snapshot/record) - condition varies depending on mode
     processCapturing(finished_compute, reshade);
 
     // undo/redo logic
     if (!platform()->is_mobile())
-        processUndoRedo(normalization_opts_changed);
+        processUndoRedo(normalization_opts_changed, gradient_changed);
 
     // Gather stats / realtime info
     collectStats(renormalize);
@@ -131,16 +153,43 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     first_frame = false;
 }
 
+void Mandelbrot_Scene::renderShaderChain(Viewport* ctx) const
+{
+    GLuint prevTex = ensureBlack1x1Tex();
+    FVec2 inv_size = FVec2(1.0f,1.0f) / (FVec2)ctx->outputSize();
+
+    for (int pass = 0; pass < pass_surfaces.size(); pass++)
+    {
+        const ShaderSurface* surface = getPassSurfaces(pass)->getSurface(active_phase);
+        surface->render(active_bmp->width(), active_bmp->height(), [&](const ShaderSurface& s)
+        {
+            s.setUniform2f("u_outTexel", inv_size.x, inv_size.y);
+            s.bindTexture2D("u_prev", prevTex, 0);
+            s.bindTexture2D("u_features", active_field->features_tex, 1);
+            s.bindTexture2D("u_gradient", gradient_tex.getTexture(), 2);
+        });
+        prevTex = surface->texture();
+    }
+}
+
 void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
 {
+    if (renormalize)
+        active_field->updateFeaturesTexture();
+
+    if (reshade)
+        renderShaderChain(ctx);
+
     // apply 128-bit camera world transformation
     ctx->setTransform(camera.getTransform());
 
+    const ShaderSurface* composite_surface = getPassSurfaces((int)pass_surfaces.size() - 1)->getSurface(active_phase);
+
     // Draw active phase bitmap
-    if (active_bmp)
+    if (composite_surface)
     {
         ///ctx->setGlobalAlpha(0.5);
-        ctx->drawImage(*active_bmp, active_bmp->worldQuad());
+        ctx->drawShaderSurface(*composite_surface, 0.0f, 0.0f, (f32)ctx->width(), (f32)ctx->height());
         ///ctx->setGlobalAlpha(1.0);
     }
 

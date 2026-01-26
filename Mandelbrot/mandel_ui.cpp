@@ -21,8 +21,118 @@ void Mandelbrot_Scene::UI::init()
     ImGuiStyle& style = ImGui::GetStyle();
     style.HoverStationaryDelay = 0.50f;
 
-    bookmark_manager.loadCategories("/data/bookmarks");
+    bl_scoped(bookmark_manager);
+    bookmark_manager.loadCategoryDirs("/data/bookmarks");
     bookmark_manager.ensureCategory("Examples");
+
+    constexpr bool force_update_bookmarks = 0;
+    constexpr bool tune_dictionary = 0;
+
+    #if MANDEL_UPDATE_ALL_BOOKMARKS
+    {
+        for (int i = 0; i < bookmark_manager.size(); i++)
+        {
+            auto& list = bookmark_manager.at(i).second;
+            std::vector<MandelBookmark>& items = list.getItems();
+            for (auto& bookmark : items)
+            {
+                MandelState state;
+                state.deserialize(bookmark.data);
+                bookmark.data = state.serialize();
+            }
+        }
+        bookmark_manager.saveAll("Updated");
+    }
+    #endif
+
+    #if MANDEL_RUN_DICTIONARY_TUNINGS
+    {
+        int current_dictionary = 2;
+
+        DictTuneConfig cfg;
+        cfg.quality = 11;
+        cfg.window = 22;
+        cfg.score_mode = DictScoreMode::Sum;
+        cfg.start_with_all_tokens = true;
+        cfg.enable_pair_removal = true;
+    
+        auto tuned = tune_brotli_dictionary(bookmark_manager.shaders, MandelState::getDictionaryTokens(current_dictionary), cfg);
+        std::string var_name = "kDictTokensV";
+        var_name += std::to_string(current_dictionary);
+        blPrint() << tuned.to_initializer(var_name) << "\n";
+    }
+    #endif
+
+    auto pal = TextEditor::GetDarkPalette();
+    pal[(int)TextEditor::PaletteIndex::PreprocIdentifier] = IM_COL32(255, 80, 80, 255);
+    editor.SetPalette(pal);
+
+    auto lang = TextEditor::LanguageDefinition::GLSL();
+    lang.mTokenRegexStrings.insert(lang.mTokenRegexStrings.begin(),
+        { "@[^\\r\\n]*", TextEditor::PaletteIndex::PreprocIdentifier });
+
+    static constexpr const char* kGlslTypes[] = {
+        // scalars
+        "void", "bool", "int", "uint", "float", "double",
+
+        // vectors
+        "vec2", "vec3", "vec4",
+        "bvec2", "bvec3", "bvec4",
+        "ivec2", "ivec3", "ivec4",
+        "uvec2", "uvec3", "uvec4",
+        "dvec2", "dvec3", "dvec4",
+
+        // matrices
+        "mat2", "mat3", "mat4",
+        "mat2x2", "mat2x3", "mat2x4",
+        "mat3x2", "mat3x3", "mat3x4",
+        "mat4x2", "mat4x3", "mat4x4",
+        "dmat2", "dmat3", "dmat4",
+        "dmat2x2", "dmat2x3", "dmat2x4",
+        "dmat3x2", "dmat3x3", "dmat3x4",
+        "dmat4x2", "dmat4x3", "dmat4x4",
+
+        // samplers (add/remove as needed)
+        "sampler1D", "sampler2D", "sampler3D", "samplerCube",
+        "sampler2DShadow", "samplerCubeShadow",
+        "sampler2DArray", "sampler2DArrayShadow",
+        "isampler2D", "usampler2D",
+    };
+
+    for (const char* t : kGlslTypes)
+        lang.mKeywords.insert(t);
+
+    // insert before the generic identifier matcher
+    auto& rx = lang.mTokenRegexStrings;
+
+    auto itIdentifierRule = std::find_if(rx.begin(), rx.end(),
+        [](const TextEditor::LanguageDefinition::TokenRegexString& r)
+    {
+        return r.first == "[a-zA-Z_][a-zA-Z0-9_]*";
+    });
+
+    // 2) iter/dist/stripe: whole-word only (yellow)
+    // Insert before the generic identifier rule if present.
+    auto itIdent = std::find_if(rx.begin(), rx.end(),
+        [](const TextEditor::LanguageDefinition::TokenRegexString& r)
+    {
+        return r.first == "[a-zA-Z_][a-zA-Z0-9_]*";
+    });
+
+    rx.insert(itIdent,
+        { R"(\b(iter|dist|stripe)\b)", TextEditor::PaletteIndex::KnownIdentifier });
+
+    editor.SetPalette(pal);
+
+    editor.SetShowWhitespaces(false);
+    editor.SetLanguageDefinition(lang);
+    editor.SetText(Mandelbrot_Scene::init_shader_source);
+    //editor.SetText(editor_shader_txt);
+}
+void Mandelbrot_Scene::UI::destroy()
+{
+    bl_scoped(bookmark_manager);
+    bookmark_manager.destroyAllTextures();
 }
 
 void Mandelbrot_Scene::UI::sidebar()
@@ -38,10 +148,12 @@ void Mandelbrot_Scene::UI::sidebar()
 
     ImGui::SeparatorText("Active State");
     populateCameraView();
-    populateColorCycleOptions();
+    populateParameterOptions();
+    populateShaderEditor();
     populateQualityOptions();
-    populateGradientShiftOptions();
-    populateGradientPicker();
+    populateGradientOptions();
+    populateAnimation();
+    //populateGradientPicker();
     populateCaptureOptions();
     //populateExperimental();
 
@@ -50,7 +162,10 @@ void Mandelbrot_Scene::UI::sidebar()
     if (!platform()->is_mobile())
     {
         populateMouseOrbit();
+
+        #ifdef MANDEL_DEV_MODE
         populateHistory();
+        #endif
     }
 
     if (tweening)
@@ -144,13 +259,13 @@ bool DrawFullscreenOverlayButton(bool* fullscreen, bool *was_held, ImVec2 screen
 void Mandelbrot_Scene::UI::overlay()
 {
     IVec2 ctx_size = main_window()->viewportSize();
-    float btn_size = 60.0f;
-    float btn_space = 10.0f;
+    float btn_size = scale_size(60.0f);
+    float btn_space = scale_size(10.0f);
 
     SDL_WindowFlags flags = SDL_GetWindowFlags(platform()->sdl_window());
     bool fullscreen = (flags & SDL_WINDOW_FULLSCREEN);
     static bool fullscreen_btn_held = false;
-    if (DrawFullscreenOverlayButton(&fullscreen, &fullscreen_btn_held, scale_size(ctx_size.x - btn_size - btn_space, btn_space), scale_size(btn_size)))
+    if (DrawFullscreenOverlayButton(&fullscreen, &fullscreen_btn_held, ImVec2(ctx_size.x - btn_size - btn_space, btn_space), btn_size))
     {
         SDL_SetWindowFullscreen(platform()->sdl_window(), fullscreen);
         main_window()->setSidebarVisible(!fullscreen);
@@ -159,47 +274,10 @@ void Mandelbrot_Scene::UI::overlay()
 
 void Mandelbrot_Scene::UI::launchBookmark(std::string_view data)
 {
-    bl_scoped(steady_zoom);
-
-    if (steady_zoom)
+    bl_schedule([data](Mandelbrot_Scene& scene)
     {
-        bl_schedule([data](Mandelbrot_Scene& scene)
-        {
-            main_window()->setFixedFrameTimeDelta(true);
-
-            scene.tween_frames_elapsed = 0;
-
-            // Give destination same reference zoom level
-            scene.state_b.camera.setReferenceZoom(scene.camera.getReferenceZoom<f128>());
-
-            // Set destination
-            scene.state_b.deserialize(data);
-
-            // Set current state to match, but reset back to current zoom
-            f128 current_zoom = scene.camera.relativeZoom<f128>();
-            static_cast<MandelState&>(scene) = scene.state_b;
-            scene.camera.setRelativeZoom(current_zoom);
-
-            // Mark starting state for checking lerp progress
-            scene.state_a = static_cast<MandelState&>(scene);
-
-            // Begin tweening
-            scene.tweening = true;
-        });
-    }
-    else
-    {
-        bl_schedule([data](Mandelbrot_Scene& scene)
-        {
-            scene.loadState(data);
-
-            // Give destination same reference zoom level
-            ///MandelState target;
-            ///target.camera.setReferenceZoom(scene.camera.getReferenceZoom<f128>());
-            ///target.deserialize(data);
-            ///scene.startTween(target);
-        });
-    }
+        scene.loadState(data);
+    });
 }
 
 void Mandelbrot_Scene::UI::populateSavingLoading()
@@ -389,7 +467,7 @@ void Mandelbrot_Scene::UI::populateCameraView()
             ImGui::Checkbox("Apply Animation", &animate_cardioid_angle);
             ImGui::SliderAngle("Angle", &ani_angle);
             if (animate_cardioid_angle)
-                ImGui::SliderAngle("Angle Step", &ani_inc, -math::half_pi, math::half_pi, 1);
+                ImGui::SliderAngle("Step", &ani_inc, -math::half_pi, math::half_pi, 1);
 
             ImGui::EndLabelledBox();
         }
@@ -400,109 +478,156 @@ void Mandelbrot_Scene::UI::populateCameraView()
 }
 void Mandelbrot_Scene::UI::populateExamples()
 {
-    if (ImGui::CollapsingHeaderBox("Examples", true))
+    if (ImGui::CollapsingHeaderBox("Bookmarks / Examples", true))
     {
-        bl_scoped(rendering_examples, rendering_example_i, render_batch_name);
-        if (render_batch_name.empty()) ImGui::BeginDisabled();
-        if (ImGui::Button("Render All"))
-        {
-            rendering_examples = true;
-            rendering_example_i = 0;
-        }
-        if (render_batch_name.empty()) ImGui::EndDisabled();
-        ImGui::InputText("Batch name", &render_batch_name);
+        bl_scoped(bookmark_manager);
 
-        ImGui::Separator();
 
-        bl_scoped(steady_zoom);
-        if (platform()->is_desktop_native())
-            ImGui::Checkbox("Steady zoom", &steady_zoom); // For desktop deep zoom recordings
+        const float sx = ImGui::GetStyle().ItemSpacing.x;
+        const float sy = ImGui::GetStyle().ItemSpacing.y;
 
+        const float btn_w = 128.0f, btn_h = 72.0f;
+        const float btn_sw = scale_size(btn_w), btn_sh = scale_size(btn_h);
 
         ImGuiStyle& style = ImGui::GetStyle();
-        float avail_full = ImGui::GetContentRegionAvail().x;
-        float min_btn_w = scale_size(100.0f);
-        int   cols = (int)((avail_full + style.ItemSpacing.x) / (min_btn_w + style.ItemSpacing.x));
-        cols = cols < 1 ? 1 : cols;
+        //float avail_full = ImGui::GetContentRegionAvail().x;
+        //float min_btn_w = btn_w;
 
-        int bookmark_idx = 0;
         for (int category_i = 0; category_i < bookmark_manager.size(); category_i++)
         {
             auto [category_name, list] = bookmark_manager.at(category_i);
             auto& bookmarks = list.getItems();
 
+            //if (ImGui::CollapsingHeader(category_name.c_str()))
             ImGui::SeparatorText(category_name.c_str());
-
-            if (ImGui::BeginChild("##examples_region", scale_size(0.0f, 200.0f)))
             {
-                if (ImGui::BeginTable("preset_grid", cols, ImGuiTableFlags_SizingStretchProp))
+                const int count = (int)bookmarks.size();
+
+                int rows = 3;
+                int cols = (int)std::ceil((f32)count / (f32)rows);
+
+                const float content_h = rows * btn_sh + (rows - 1) * sy;
+                const float strip_h = content_h + sy + style.ScrollbarSize;
+
+                //const float parent_scroll_y_before = ImGui::GetScrollY();
+                bool captured_wheel_for_child = false;
+
+                ImGui::PushID(category_i);
+
+                if (ImGui::BeginChild("##examples_region", ImVec2(0.0f, strip_h), 0, ImGuiWindowFlags_HorizontalScrollbar))
                 {
-                    for (MandelBookmark& bookmark : bookmarks)
+                    for (int col = 0; col < cols; ++col)
                     {
-                        ImGui::TableNextColumn();
+                        if (col > 0)
+                            ImGui::SameLine(0.0f, sx);
 
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
-                        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
+                        ImGui::BeginGroup();
 
-                        ImGui::PushID(bookmark_idx);
-                        if (ImGui::ImageButtonCentered("##bookmark", bookmark.thumbTexture(), ImVec2(128, 72)))
+                        for (int row = 0; row < rows; ++row)
                         {
-                            launchBookmark(bookmark.data);
+                            int idx = col * rows + row;
+                            if (idx >= count)
+                                break;
+
+                            MandelBookmark& bookmark = bookmarks[idx];
+
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
+                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
+
+                            ImGui::PushID(idx);
+                            if (ImGui::ImageButton("##bookmark", bookmark.thumbTexture(), ImVec2(btn_sw, btn_sh)))
+                                launchBookmark(bookmark.data);
+
+                            ImGui::PopID();
+
+                            ImGui::PopStyleVar();
+                            ImGui::PopStyleColor(3);
                         }
-                        ImGui::PopID();
 
-                        ImGui::PopStyleVar();
-                        ImGui::PopStyleColor(3);
-
-                        bookmark_idx++;
+                        ImGui::EndGroup();
                     }
 
-                    ImGui::EndTable();
-                }
-            }
-            ImGui::EndChild();
-            bool allow_add_new = true;
-            #ifndef BITLOOP_DEV_MODE
-            // if RELEASE build, don't allow modifying bundled example bookmarks
-            if (category_name == "Examples")
-                allow_add_new = false;
-            #endif
+                    const ImVec2 inner_min = ImGui::GetWindowPos() + ImGui::GetWindowContentRegionMin();
+                    const ImVec2 inner_max = ImGui::GetWindowPos() + ImGui::GetWindowContentRegionMax();
+                    const ImVec2 inner_size(inner_max.x - inner_min.x, inner_max.y - inner_min.y);
 
-            if (allow_add_new)
-            {
-                if (ImGui::Button("Bookmark Active"))
-                {
-                    // Generate bookmark on worker thread (since we also need to generate a thumbnail)
-                    bl_schedule([&, category_i, category_name](Mandelbrot_Scene& scene)
+                    const ImVec2 old_cursor_screen = ImGui::GetCursorScreenPos();
+                    ImGui::SetCursorScreenPos(ImGui::GetWindowPos());
+
+                    ImGui::InvisibleButton("##wheel_catcher", inner_size);
+                    ImGui::SetItemAllowOverlap();
+
+                    ImGuiIO& io = ImGui::GetIO();
+                    ImGuiWindow* child_window = ImGui::GetCurrentWindow();
+
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem) && io.MouseWheel != 0.0f)
                     {
-                        // Serialize Mandelbrot state
-                        std::string state_data = scene.serialize();
+                        blPrint() << rand() << " " << "Mouse Scroll Capture";
+                        ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
 
-                        // Grab a suitable thumbnail preset
-                        SnapshotPresetList all_presets = main_window()->getSnapshotPresetManager()->allPresets();
-                        SnapshotPreset* preset = all_presets.findByAlias("thumb128x72_hd");
-                        assert(preset != nullptr);
+                        const float step = ImGui::GetFontSize() * 8.0f;
+                        ImGui::SetScrollX(ImGui::GetScrollX() - io.MouseWheel * step);
 
-                        std::string thumb_path = ProjectBase::activeProject()->root_path(
-                            "data/bookmarks/" + category_name + "/" + MandelBookmark(state_data).thumbFilename()
-                        );
+                        ImGuiContext& g = *ImGui::GetCurrentContext();
+                        g.WheelingWindow = child_window;
+                        g.WheelingWindowReleaseTimer = 1000.0f;
+                        captured_wheel_for_child = true;
+                    }
 
-                        // Create bookmark, generate thumbnail image, load direct from memory (also saves to data/thumbnails/ for embedding)
-                        scene.beginSnapshot(*preset, thumb_path, [&, state_data, category_i](bytebuf& thumb_data, const SnapshotPreset& preset)
+                    ImGui::SetCursorScreenPos(old_cursor_screen);
+                }
+                
+                ImGui::EndChild();
+
+                //if (captured_wheel_for_child)
+                //    ImGui::SetScrollY(parent_scroll_y_before);
+
+
+                ImGui::PopID();
+
+                bool allow_add_new = true;
+                #ifndef BITLOOP_DEV_MODE
+                // if RELEASE build, don't allow modifying bundled example bookmarks
+                if (category_name == "Examples")
+                    allow_add_new = false;
+                #endif
+
+                if (allow_add_new)
+                {
+                    if (ImGui::Button("Bookmark Active"))
+                    {
+                        // Generate bookmark on worker thread (since we also need to generate a thumbnail)
+                        bl_schedule([&, category_i, category_name](Mandelbrot_Scene& scene)
                         {
-                            MandelBookmark bookmark(state_data);
+                            // Serialize Mandelbrot state
+                            std::string state_data = scene.serialize();
 
-                            // Load thumbnail from memory
-                            bookmark.loadThumbnail(thumb_data, preset.width(), preset.height());
+                            // Grab a suitable thumbnail preset
+                            SnapshotPresetList all_presets = main_window()->getSnapshotPresetManager()->allPresets();
+                            SnapshotPreset* preset = all_presets.findByAlias("thumb128x72_hd");
+                            assert(preset != nullptr);
 
-                            // Finally, add bookmark to the target list
-                            MandelBookmarkList& list = bookmark_manager.at(category_i).second; /// todo: reaccessing UI from worker, maybe not thread-safe
-                            list.addItem(bookmark);
-                        },
-                        /* embedded XMP data */ state_data);
-                    });
+                            std::string thumb_path = ProjectBase::activeProject()->root_path(
+                                "data/bookmarks/" + category_name + "/" + MandelBookmark(state_data).thumbFilename()
+                            );
+
+                            // Create bookmark, generate thumbnail image, load direct from memory (also saves to data/thumbnails/ for embedding)
+                            scene.beginSnapshot(*preset, thumb_path, [&, state_data, category_i](bytebuf& thumb_data, const SnapshotPreset& preset)
+                            {
+                                MandelBookmark bookmark(state_data);
+
+                                // Load thumbnail from memory
+                                bookmark.loadThumbnail(thumb_data, preset.width(), preset.height());
+
+                                // Finally, add bookmark to the target list
+                                MandelBookmarkList& list = bookmark_manager.at(category_i).second; /// todo: reaccessing UI from worker, maybe not thread-safe
+                                list.addItem(bookmark);
+                            },
+                                /* embedded XMP data */ state_data);
+                        });
+                    }
                 }
             }
         }
@@ -552,7 +677,9 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
             bl_scoped(interior_phases_contract_expand);
             bl_scoped(maxdepth_show_optimized);
 
-            ImGui::Spacing(); ImGui::Spacing();
+            ImGui::Spacing();
+            ImGui::Spacing();
+            ImGui::Spacing();
             ImGui::Text("Interior forwarding");
             if (ImGui::Combo("###MandelInteriorForwarding", &interior_forwarding, MandelMaxDepthOptimizationNames, (int)MandelInteriorForwarding::COUNT))
             {
@@ -585,7 +712,7 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
         ImGui::EndCollapsingHeaderBox();
     }
 
-    if (ImGui::CollapsingHeaderBox("Normalization Sampling", false))
+    if (ImGui::CollapsingHeaderBox("Normalization Field", false))
     {
         bl_scoped(normalize_field_scale);
         bl_scoped(normalize_field_quality);
@@ -634,52 +761,76 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
         ImGui::EndCollapsingHeaderBox();
     }
 }
-void Mandelbrot_Scene::UI::populateColorCycleOptions()
+void Mandelbrot_Scene::UI::populateParameterOptions()
 {
     if (ImGui::CollapsingHeaderBox("Parameters", false))
     {
         // Weights / Mix formula
         bl_scoped(iter_weight, dist_weight, stripe_weight);
 
-        double iter_ratio, dist_ratio, stripe_ratio;
+        f32 iter_ratio, dist_ratio, stripe_ratio;
         shadingRatios(
             iter_weight, dist_weight, stripe_weight,
             iter_ratio, dist_ratio, stripe_ratio
         );
 
         char iter_header[32], dist_header[32], stripe_header[32];
-        sprintf(iter_header, "Iter - %d%%###iter_tab", (int)(iter_ratio * 100.0));
-        sprintf(dist_header, "Dist - %d%%###dist_tab", (int)(dist_ratio * 100.0));
-        sprintf(stripe_header, "Stripe - %d%%###stripe_tab", (int)(stripe_ratio * 100.0));
+        sprintf(iter_header, "Iter - %d%%###iter_tab", (int)(iter_ratio * 100.0f));
+        sprintf(dist_header, "Dist - %d%%###dist_tab", (int)(dist_ratio * 100.0f));
+        sprintf(stripe_header, "Stripe - %d%%###stripe_tab", (int)(stripe_ratio * 100.0f));
 
-        ImGui::SeparatorText("Subexpression Weights");
-        ///ImGui::SliderDouble("ITER", &iter_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-        ///ImGui::SliderDouble("DIST", &dist_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-        ///ImGui::SliderDouble("STRIPE", &stripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::SliderDouble("ITER (A)", &iter_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::SliderDouble("DIST (B)", &dist_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-        ImGui::SliderDouble("STRIPE (C)", &stripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SeparatorText("Feature Weights");
+        ImGui::SliderDouble("ITER", &iter_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderDouble("DIST", &dist_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderDouble("STRIPE", &stripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 
-        //ImGui::Combo("###MandelFormula", &shade_formula, MandelFormulaNames, (int)MandelShaderFormula::COUNT);
 
-        bl_scoped(iter_x_dist_weight, dist_x_stripe_weight, stripe_x_iter_weight);
+        bl_scoped(iter_x_dist_weight,       dist_x_stripe_weight,     stripe_x_iter_weight);
         bl_scoped(iter_x_distStripe_weight, dist_x_iterStripe_weight, stripe_x_iterDist_weight);
 
         bool has_iter   = iter_weight > 0.000001;
         bool has_dist   = dist_weight > 0.000001;
         bool has_stripe = stripe_weight > 0.000001;
 
-        ImGui::SeparatorText("Multiply Weights");
+        ImGui::SeparatorText("Formula Weights");
 
-        if (has_dist && has_stripe) ImGui::SliderFloat("DIST x STRIPE", &dist_x_stripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-        if (has_iter && has_stripe) ImGui::SliderFloat("STRIPE x ITER", &stripe_x_iter_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-        if (has_iter && has_dist)   ImGui::SliderFloat("ITER x DIST",   &iter_x_dist_weight, 0.0, 1.0, "%.3f",   ImGuiSliderFlags_AlwaysClamp);
+        float required_space = 0.0f;
+        ImGui::IncreaseRequiredSpaceForLabel(required_space, "STRIPE + (ITER x DIST)");
+
+        if (has_dist && has_stripe)
+        {
+            ImGui::SetNextItemWidthForSpace(required_space);
+            ImGui::SliderFloat("ITER + (DIST x STRIPE)", &dist_x_stripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        }
+        if (has_iter && has_stripe)
+        {
+            ImGui::SetNextItemWidthForSpace(required_space);
+            ImGui::SliderFloat("DIST + (STRIPE x ITER)", &stripe_x_iter_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        }
+        if (has_iter && has_dist)
+        {
+            ImGui::SetNextItemWidthForSpace(required_space);
+            ImGui::SliderFloat("STRIPE + (ITER x DIST)", &iter_x_dist_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        }
+
         ImGui::Spacing();
         if (has_iter && has_dist && has_stripe)
         {
-            ImGui::SliderFloat("x (DIST + STRIPE)", &iter_x_distStripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-            ImGui::SliderFloat("x (ITER + STRIPE)", &dist_x_iterStripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-            ImGui::SliderFloat("x (ITER + DIST)",   &stripe_x_iterDist_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SetNextItemWidthForSpace(required_space);
+            ImGui::SliderFloat("ITER x (DIST + STRIPE)", &iter_x_distStripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SetNextItemWidthForSpace(required_space);
+            ImGui::SliderFloat("DIST x (ITER + STRIPE)", &dist_x_iterStripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SetNextItemWidthForSpace(required_space);
+            ImGui::SliderFloat("STRIPE x (ITER + DIST)", &stripe_x_iterDist_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        }
+
+        if (iter_x_dist_weight == 0.0 && dist_x_stripe_weight == 0.0 && stripe_x_iter_weight == 0.0 &&
+            iter_x_distStripe_weight == 0.0 && dist_x_iterStripe_weight == 0.0 && stripe_x_iterDist_weight == 0.0)
+        {
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.2f, 1.0f));
+            ImGui::TextUnformatted("Using base:  ITER + DIST + STRIPE");
+            ImGui::PopStyleColor();
         }
 
         //if (has_dist && has_stripe) ImGui::SliderFloat("A + (B x C)", &dist_x_stripe_weight, 0.0, 1.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
@@ -730,7 +881,7 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
                     //bl_scoped(use_smoothing); 
                     //ImGui::Checkbox("Smooth", &use_smoothing);
 
-                    ImGui::Checkbox("Normalize to Zoom", &iter_params.cycle_iter_normalize_depth);
+                    ImGui::Checkbox("Use Normalization Field", &iter_params.cycle_iter_normalize_depth);
 
                     double raw_cycle_iters;
                     if (iter_params.cycle_iter_dynamic_limit)
@@ -800,7 +951,7 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
                                 (int)stats.iter_histogram.size(),
                                 100, 1.0);
                             ImPlot::EndPlot();
-                        }
+                        } 
                     }
                 }
                 ImGui::EndTabBox();
@@ -822,7 +973,7 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
                     ImGui::Checkbox("Invert", &dist_params.cycle_dist_invert);
 
                     ImGui::SetNextItemWidthForSpace(required_width);
-                    ImGui::SliderDouble("Dist", &dist_params.cycle_dist_value, 0.001, 1.0, "%.5f", ImGuiSliderFlags_Logarithmic);
+                    ImGui::SliderDouble("Distance", &dist_params.cycle_dist_value, 0.001, 1.0, "%.5f", ImGuiSliderFlags_Logarithmic);
 
                     ImGui::SetNextItemWidthForSpace(required_width);
                     ImGui::SliderDouble_InvLog("Sharpness", &dist_params.cycle_dist_sharpness, 0.0, 100.0, "%.4f%%",
@@ -862,21 +1013,21 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
                         else if (ImGui::Button("Hide Histogram"))
                             show_dist_hist = false;
 
-                        if (show_dist_hist)
-                        {
-                            float w = ImGui::GetContentRegionAvail().x;
-                            if (ImPlot::BeginPlot("Distance", ImVec2(w, 0)))
+                            if (show_dist_hist)
                             {
-                                ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
-                                ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
-                                ImPlot::PlotHistogram("##dist_hist",
-                                    stats.dist_histogram.data(),
-                                    (int)stats.dist_histogram.size(),
-                                    100, 1.0
-                                );
-                                ImPlot::EndPlot();
+                                float w = ImGui::GetContentRegionAvail().x;
+                                if (ImPlot::BeginPlot("Distance", ImVec2(w, 0)))
+                                {
+                                    ImPlot::SetupAxis(ImAxis_X1, "Value", ImPlotAxisFlags_AutoFit);
+                                    ImPlot::SetupAxis(ImAxis_Y1, "Pixels", ImPlotAxisFlags_AutoFit);
+                                    ImPlot::PlotHistogram("##dist_hist",
+                                        stats.dist_histogram.data(),
+                                        (int)stats.dist_histogram.size(),
+                                        100, 1.0
+                                    );
+                                    ImPlot::EndPlot();
+                                }
                             }
-                        }
                     }
                 }
 
@@ -957,138 +1108,255 @@ void Mandelbrot_Scene::UI::populateColorCycleOptions()
 
             ImGui::EndTabBar();
         }
+
     }
 }
-void Mandelbrot_Scene::UI::populateGradientShiftOptions()
+void Mandelbrot_Scene::UI::populateShaderEditor()
 {
-    if (ImGui::CollapsingHeaderBox("Gradient Offset + Animation", false))
+    if (ImGui::CollapsingHeaderBox("Shading", false))
     {
-        bl_scoped(hue_shift, gradient_shift);
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        auto cpos = editor.GetCursorPosition();
+        g.PlatformImeData.WantVisible = true;
+        g.PlatformImeData.InputPos = ImVec2(0, 0);// ImVec2(cpos.x - 1.0f, cpos.y - g.FontSize);
+        g.PlatformImeData.InputLineHeight = g.FontSize;
+        g.PlatformImeViewport = ImGui::GetCurrentWindow()->Viewport->ID;
 
-        // Shift
+        // update editor text on request from worker
         {
-            bl_view(gradient);
-            bl_pull(gradient_shifted); // no need to push (calculated already in viewportProcess)
-
-            // Animation
-            bl_scoped(show_color_animation_options);
-            bl_scoped(gradient_shift_step, hue_shift_step);
-
-            ImGui::Checkbox("Animate", &show_color_animation_options);
-
-            float required_space = 0.0f;
-            ImGui::IncreaseRequiredSpaceForLabel(required_space, "Gradient shift");
-
-            ImGui::SetNextItemWidthForSpace(required_space);
-            if (ImGui::DragDouble("Gradient shift", &gradient_shift, 0.01, -100.0, 100.0, " %.3f", ImGuiSliderFlags_AlwaysClamp))
+            bl_scoped(update_editor_shader_source);
+            if (update_editor_shader_source)
             {
-                gradient_shift = math::wrap(gradient_shift, 0.0, 1.0);
+                bl_scoped(shader_source_txt);
+                editor.SetText(shader_source_txt);
 
-                // immediately preview
-                transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
+                update_editor_shader_source = false;
             }
-
-            if (show_color_animation_options)
-            {
-                ImGui::Indent();
-                ImGui::PushID("gradient_increment");
-                ImGui::SetNextItemWidthForSpace(required_space);
-                ImGui::SliderDouble("Increment", &gradient_shift_step, -0.02, 0.02, "%.4f");
-                ImGui::PopID();
-                ImGui::Unindent();
-            }
-
-            ImGui::SetNextItemWidthForSpace(required_space);
-            double hue_shift_rad = math::toRadians(hue_shift);
-            static double initial_hue_shift_rad = hue_shift_rad;
-            if (ImGui::RevertableSliderAngle("Hue shift", &hue_shift_rad, &initial_hue_shift_rad, 0.0, math::tau, 3))
-            {
-                hue_shift = math::toDegrees(hue_shift_rad);
-                transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
-            }
-
-            if (show_color_animation_options)
-            {
-                ImGui::Indent();
-                ImGui::PushID("hue_increment");
-                ImGui::SetNextItemWidthForSpace(required_space);
-                ImGui::SliderDouble("Increment", &hue_shift_step, -5.0, 5.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
-                ImGui::PopID();
-                ImGui::Unindent();
-            }
-
-            ImGui::Spacing();
-            ImGui::Text("Live preview");
-            ImGui::GradientButton(&gradient_shifted, platform()->dpr());
         }
 
-        if (ImGui::Button("Set as base gradient"))
-        {
-            bl_scoped(gradient);
-            bl_pull_temp(gradient_shifted);
-            gradient = gradient_shifted;
+        ImGui::TextUnformatted("GLSL fragment shader passes");
 
-            gradient_shift = 0;
-            hue_shift = 0;
+
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+
+        const float splitterThickness = 6.0f;
+        const float minEditorHeight = 120.0f;
+
+        float maxEditorHeight = 800.0f;
+        if (maxEditorHeight < minEditorHeight)
+            maxEditorHeight = minEditorHeight;
+
+        // clamp
+        if (editorHeight < minEditorHeight) editorHeight = minEditorHeight;
+        if (editorHeight > maxEditorHeight) editorHeight = maxEditorHeight;
+
+        // editor takes a controlled height
+        ImGui::PushFont(main_window()->monoFont());
+        editor.Render("##editor", ImVec2(avail.x, editorHeight), true);
+        ImGui::PopFont();
+
+        if (editor.IsTextChanged())
+        {
+            bl_scoped(shader_source_txt);
+            shader_source_txt = editor.GetText();
+
+            // TODO: Check script for compile errors (we're already on GUI thread, so it's safe here)
+
         }
+
+        // draggable splitter
+        ImGui::InvisibleButton("##editor_splitter", ImVec2(avail.x, splitterThickness));
+        if (ImGui::IsItemHovered() || ImGui::IsItemActive())
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+
+        if (ImGui::IsItemActive())
+            editorHeight += ImGui::GetIO().MouseDelta.y;
+
+        // visible separator line
+        {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 a = ImGui::GetItemRectMin();
+            ImVec2 b = ImGui::GetItemRectMax();
+            float y = (a.y + b.y) * 0.5f;
+            dl->AddLine(ImVec2(a.x, y), ImVec2(b.x, y), ImGui::GetColorU32(ImGuiCol_Separator), 1.0f);
+        }
+
+        // bottom panel uses the remaining space
+        ImGui::BeginChild("##bottom_panel", ImVec2(0, 0), true);
+        ImGui::TextUnformatted("TODO...");
+        ImGui::EndChild();
 
         ImGui::EndCollapsingHeaderBox();
     }
 }
-void Mandelbrot_Scene::UI::populateGradientPicker()
+void Mandelbrot_Scene::UI::populateGradientOptions()
 {
-    if (ImGui::CollapsingHeaderBox("Base Color Gradient", false))
+    if (ImGui::CollapsingHeaderBox("Gradient", false))
     {
-        bl_scoped(gradient);
-
-        ImGui::Text("Load Preset");
-        static int selecting_template = -1;
-        if (ImGui::Combo("###ColorTemplate", &selecting_template, ColorGradientNames, (int)GradientPreset::COUNT))
-        {
-            generateGradientFromPreset(gradient, (GradientPreset)selecting_template);
-            selecting_template = -1;
-        }
-
-
-        ImGui::Dummy(scale_size(0, 8));
-
-        if (ImGui::GradientEditor(&gradient,
-            platform()->dpr(),
-            platform()->dpr() * platform()->thumbScale()))
-        {
-            // Shift (not needed?)
-            ///bl_pull(gradient_shifted, hue_shift, gradient_shift);
-            ///transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
-        }
-
-        if (ImGui::Button("Flatten hue"))
+        ImGui::BeginLabelledBox("Base Gradient");
         {
             bl_scoped(gradient);
-            auto& marks = gradient.getMarks();
-            std::vector<Color> colors;
 
-            for (float x = 0.0f; x <= 1.0f; x += 0.01f) {
-                float color[4];
-                gradient.getColorAt(x, color);
-                colors.push_back(Color(color));
-            }
-            float avg_hue = Color::avgHueEstimate(colors);
-            for (auto& mark : marks)
+            ImGui::Text("Load Preset");
+            static int selecting_template = -1;
+            if (ImGui::Combo("###ColorTemplate", &selecting_template, ColorGradientNames, (int)GradientPreset::COUNT))
             {
-                auto adjusted = Color(mark.color).setHue(avg_hue).vec4();
-                memcpy(mark.color, adjusted.data(), sizeof(float) * 4);
+                generateGradientFromPreset(gradient, (GradientPreset)selecting_template);
+                selecting_template = -1;
             }
-            gradient.refreshCache();
-        }
 
-        #if MANDEL_DEV_MODE
-        if (ImGui::Button("Copy gradient C++ code"))
+
+            ImGui::Dummy(scale_size(0, 8));
+
+            if (ImGui::GradientEditor(&gradient,
+                platform()->dpr(),
+                platform()->dpr() * platform()->thumbScale(),
+                scale_size(250.0f)))
+            {
+                // Shift (not needed?)
+                ///bl_pull(gradient_shifted, hue_shift, gradient_shift);
+                ///transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
+            }
+
+            
+
+            #if MANDEL_DEV_MODE
+            if (ImGui::Button("Copy gradient C++ code"))
+            {
+                ImGui::SetClipboardText(gradient.to_cpp_marks().c_str());
+            }
+            #endif
+
+            ImGui::Spacing();
+        }
+        ImGui::EndLabelledBox();
+
+        ImGui::BeginLabelledBox("Transform");
         {
-            ImGui::SetClipboardText(gradient.to_cpp_marks().c_str());
-        }
-        #endif
+            bl_scoped(hue_shift, gradient_shift);
 
-        ImGui::Spacing();
+            // Shift
+            {
+                bl_view(gradient);
+                bl_pull(gradient_shifted); // no need to push (calculated already in viewportProcess)
+
+                ImGui::TextUnformatted("Shift:");
+                float required_space = 0.0f;
+                ImGui::IncreaseRequiredSpaceForLabel(required_space, "Gradient    ");
+
+                ImGui::SetNextItemWidthForSpace(required_space);
+                static double initial_gradient_shift = 0.0;
+                if (ImGui::RevertableDragDouble("Gradient", &gradient_shift, &initial_gradient_shift, 0.01, -100.0, 100.0, " %.3f", ImGuiSliderFlags_AlwaysClamp))
+                {
+                    gradient_shift = math::wrap(gradient_shift, 0.0, 1.0);
+
+                    // immediately preview
+                    transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
+                }
+
+                
+                double hue_shift_rad = math::toRadians(hue_shift);
+                static double initial_hue_shift_rad = 0.0;
+                ImGui::SetNextItemWidthForSpace(required_space);
+                if (ImGui::RevertableSliderAngle("Hue", &hue_shift_rad, &initial_hue_shift_rad, 0.0, math::tau, 3))
+                {
+                    hue_shift = math::toDegrees(hue_shift_rad);
+                    transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
+                }
+
+                
+
+                ImGui::Spacing();
+                ImGui::Text("Live preview");
+                ImGui::GradientButton(&gradient_shifted, platform()->dpr());
+            }
+
+            if (ImGui::Button("Set as base gradient"))
+            {
+                bl_scoped(gradient);
+                bl_pull_temp(gradient_shifted);
+                gradient = gradient_shifted;
+
+                gradient_shift = 0;
+                hue_shift = 0;
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Flatten hue"))
+            {
+                bl_scoped(gradient);
+                auto& marks = gradient.getMarks();
+                std::vector<Color> colors;
+
+                for (float x = 0.0f; x <= 1.0f; x += 0.01f) {
+                    float color[4];
+                    gradient.getColorAt(x, color);
+                    colors.push_back(Color(color));
+                }
+                float avg_hue = Color::avgHueEstimate(colors);
+                for (auto& mark : marks)
+                {
+                    auto adjusted = Color(mark.color).setHue(avg_hue).vec4();
+                    memcpy(mark.color, adjusted.data(), sizeof(float) * 4);
+                }
+                gradient.refreshCache();
+            }
+        }
+        ImGui::EndLabelledBox();
+
+        ImGui::EndCollapsingHeaderBox();
+    }
+}
+void Mandelbrot_Scene::UI::populateAnimation()
+{
+    if (ImGui::CollapsingHeaderBox("Animate", false))
+    {
+        bl_scoped(gradient_shift_step, hue_shift_step);
+        bl_scoped(animate_gradient_shift, animate_gradient_hue);
+
+        ImGui::TextUnformatted("Gradient:");
+
+        float required_space = 0.0f;
+        ImGui::IncreaseRequiredSpaceForLabel(required_space, "Gradient    ");
+
+        // Gradient Shift
+        ImGui::Checkbox("##gradient_shift_ani", &animate_gradient_shift);
+        ImGui::SameLine();
+
+        if (!animate_gradient_shift) ImGui::BeginDisabled();
+        ImGui::PushID("gradient_increment");
+        ImGui::SetNextItemWidthForSpace(required_space);
+        ImGui::SliderDouble("Shift", &gradient_shift_step, -0.02, 0.02, "%.4f");
+        ImGui::PopID();
+        if (!animate_gradient_shift) ImGui::EndDisabled();
+
+        // Gradient Hue
+        ImGui::Checkbox("##gradient_hue_ani", &animate_gradient_hue);
+        ImGui::SameLine();
+
+        if (!animate_gradient_hue) ImGui::BeginDisabled();
+        ImGui::PushID("hue_increment");
+        ImGui::SetNextItemWidthForSpace(required_space);
+        ImGui::SliderDouble("Hue", &hue_shift_step, -5.0, 5.0, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::PopID();
+        if (!animate_gradient_hue) ImGui::EndDisabled();
+
+        // Stripe
+        ImGui::TextUnformatted("Stripe:");
+
+        bl_scoped(animate_stripe_phase);
+        bl_scoped(phase_step);
+
+        ImGui::Checkbox("##phase_ani", &animate_stripe_phase);
+        ImGui::SameLine();
+
+        if (!animate_stripe_phase) ImGui::BeginDisabled();
+        ImGui::PushID("phase_increment");
+        ImGui::SetNextItemWidthForSpace(required_space);
+        ImGui::SliderAngle("Phase", &phase_step, -math::pi_f / 100.0f, math::pi_f / 100.0f, 1, ImGuiSliderFlags_AlwaysClamp);
+        ImGui::PopID();
+        if (!animate_stripe_phase) ImGui::EndDisabled();
+  
         ImGui::EndCollapsingHeaderBox();
     }
 }
@@ -1303,8 +1571,6 @@ void computeOrbit(f128 x0, f128 y0, int iter_lim, std::vector<f64>& xs, std::vec
     }
 }
 
-
-
 template<typename T>
 void computeOrbitVel(f128 x0, f128 y0, int iter_lim, std::vector<f64>& xs, std::vector<f64>& ys)
 {
@@ -1365,19 +1631,110 @@ void Mandelbrot_Scene::UI::populateMouseOrbit()
     }
 }
 
-
-
 void Mandelbrot_Scene::UI::populateCaptureOptions()
 {
-    if (ImGui::CollapsingHeaderBox("Snapshot Filters", false))
+    if (ImGui::CollapsingHeaderBox("Capture Options", false))
     {
-        ImGui::TextUnformatted("Valid presets (filters global list):");
+        // ---------------- Permitted capture presets during batch snapshot ----------------
+        ///ImGui::SeparatorText("Allowed presets (for current state)");
+        ImGui::BeginLabelledBox("Allowed presets (for current state)");
         auto& standard_presets = main_window()->getSnapshotPresetManager()->allPresets();
 
         bl_scoped(valid_presets);
-        populateCapturePresetsList([&](int i) -> SnapshotPreset& {
+        populateCapturePresetsList<CapturePresetsSelectMode::MULTI>([&](int i) -> SnapshotPreset& {
             return standard_presets[i];
         }, (int)standard_presets.size(), &valid_presets, selected_preset_i);
+
+        ImGui::EndLabelledBox();
+
+        // ---------------- Batch snapshot examples ----------------
+        ImGui::Spacing();
+        ImGui::BeginLabelledBox("Batch snapshot");
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(scale_size(150.0f), ImGui::GetContentRegionAvail().x));
+        ImGui::TextWrapped(
+            "Renders all examples with the checked image presets in the "
+            "global settings (filtered by the per-state preset list above)"
+        );
+
+        /// TODO: Have an option: "skip if folder already contains snapshot with matching XMP state"
+        /// - works with non-deterministic filenames (snap1, snap2, etc)
+        /// - but harder to do than matching hash-based filenames
+
+        bl_scoped(rendering_examples, rendering_example_i, render_batch_name, ignore_preset_filters);
+        if (render_batch_name.empty()) ImGui::BeginDisabled();
+        if (ImGui::Button("Render ALL bookmarks"))
+        {
+            rendering_examples = true;
+            rendering_example_i = 0;
+        }
+        if (render_batch_name.empty()) ImGui::EndDisabled();
+
+        float required_space = 0.0f;
+        ImGui::IncreaseRequiredSpaceForLabel(required_space, "Folder name");
+        ImGui::SetNextItemWidthForSpace(required_space);
+
+        ImGui::SetNextItemWidthForSpace(required_space);
+        ImGui::InputText("Folder name", &render_batch_name);
+        ImGui::Checkbox("Ignore filters", &ignore_preset_filters);
+
+        ImGui::EndLabelledBox();
+
+        // ---------------- Steady Zoom Animation ----------------
+        ImGui::Spacing();
+        ImGui::BeginLabelledBox("Steady Zoom Animation");
+        
+        if (ImGui::Button("Begin zoom to active state"))
+        {
+            bl_schedule([](Mandelbrot_Scene& scene)
+            {
+                std::string data = scene.serializeState();
+
+                main_window()->setFixedFrameTimeDelta(true);
+
+                scene.tween_frames_elapsed = 0;
+
+                // Give destination same reference zoom level
+                scene.state_b.camera.setReferenceZoom(scene.camera.getReferenceZoom<f128>());
+
+                // Set destination
+                scene.state_b.deserialize(data);
+
+                // Set current state to match, but reset back to current zoom
+                f128 current_zoom = 1.0;// scene.camera.relativeZoom<f128>();
+                static_cast<MandelState&>(scene) = scene.state_b;
+                scene.camera.setRelativeZoom(current_zoom);
+
+                // Lock stripe mean on target
+                scene.stripe_mean_locked = scene.active_field->mean_stripe;
+
+                // Mark starting state for checking lerp progress
+                scene.state_a = static_cast<MandelState&>(scene);
+
+                // Begin tweening
+                scene.tweening = true;
+                scene.steady_zoom = true;
+
+                if (scene.record_steady_zoom)
+                {
+                    scene.beginRecording();
+                }
+            });
+        }
+
+        bl_scoped(record_steady_zoom, steady_zoom_mult_speed, steady_zoom_rotate_speed);
+
+        ImGui::Checkbox("Record", &record_steady_zoom);
+
+        ImGui::SetNextItemWidthForSpace(required_space);
+        ImGui::SliderDouble("Zoom rate", &steady_zoom_mult_speed, 0.01, 0.1,
+            "%.2f", ImGuiSliderFlags_AlwaysClamp);
+
+        constexpr double spin_mag = math::toRadians(-0.1);
+        ImGui::SetNextItemWidthForSpace(required_space);
+        ImGui::SliderAngle("Spin rate", &steady_zoom_rotate_speed, -spin_mag, spin_mag,
+            2, ImGuiSliderFlags_AlwaysClamp);
+
+        ImGui::EndLabelledBox();
 
         ImGui::EndCollapsingHeaderBox();
     }

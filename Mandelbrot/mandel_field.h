@@ -191,7 +191,6 @@ struct EscapeFieldPixel
     f32 stripe_min;
     f32 stripe_max;
 
-
     f32 final_depth;
     f32 final_dist;
     f32 final_stripe;
@@ -242,6 +241,10 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
     std::vector<i8> skip_flags;
 
     int w = 0, h = 0;
+
+    std::vector<float> gpu_data;
+    GLuint features_tex = 0;
+    int tex_w = 0, tex_h = 0;
 
     EscapeField(int phase) : compute_phase(phase) {}
 
@@ -461,6 +464,86 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
         }
     }
 
+
+    void fillFeaturesTexureData()
+    {
+        const size_t len = size();
+        gpu_data.resize(len * 4);
+
+        for (size_t i = 0; i < len; i++)
+        {
+            const EscapeFieldPixel& px = std::vector<EscapeFieldPixel>::at(i);
+
+            const float iter = px.final_depth;
+            const float dist = px.final_dist;
+            const float stripe = px.final_stripe;
+
+            gpu_data[i * 4 + 0] = iter;
+            gpu_data[i * 4 + 1] = dist;
+            gpu_data[i * 4 + 2] = stripe;
+            gpu_data[i * 4 + 3] = 0.0f;
+        }
+    }
+
+
+    void initFeaturesTexture()
+    {
+        if (features_tex == 0)
+            glGenTextures(1, &features_tex);
+
+        if (tex_w == w && tex_h == h)
+            return;
+
+        tex_w = w;
+        tex_h = h;
+
+        glBindTexture(GL_TEXTURE_2D, features_tex);
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+        // reallocate storage for new resolution
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+
+    void updateFeaturesTexture()
+    {
+        initFeaturesTexture();
+
+        glBindTexture(GL_TEXTURE_2D, features_tex);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+        // upload new feature data into already-allocated float texture
+        glTexSubImage2D(
+            GL_TEXTURE_2D,
+            0,
+            0, 0,
+            w, h,
+            GL_RGBA,
+            GL_FLOAT,
+            gpu_data.data()
+        );
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
+    void destroyFeaturesTexture()
+    {
+        if (features_tex != 0)
+        {
+            glDeleteTextures(1, &features_tex);
+            features_tex = 0;
+            tex_w = 0;
+            tex_h = 0;
+        }
+    }
 
 private:
 

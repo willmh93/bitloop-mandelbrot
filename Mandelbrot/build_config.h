@@ -12,6 +12,9 @@
     #define MANDEL_DEV_EDIT_TWEEN_SPLINES           0
     #define MANDEL_EXTENDED_FIELD_STATS             0
     #define MANDEL_EXPERIMENTAL_TESTS               0
+
+    #define MANDEL_RUN_DICTIONARY_TUNINGS           0
+    #define MANDEL_UPDATE_ALL_BOOKMARKS             0
 #endif
 
 

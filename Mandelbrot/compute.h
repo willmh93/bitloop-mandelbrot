@@ -308,7 +308,7 @@ FORCE_INLINE f32 toNormalizedStripe(const StripeAccum& stripe, f32 phase)
 ///
 ///inline void sort_and_dedup(std::vector<std::pair<float, float>>& ideal_zf_numerator_map)
 ///{
-///    // _ChatGPT_ Sort by key, then by value (so identical pairs become adjacent).
+///    // sort by key, then by value (so identical pairs become adjacent).
 ///    std::sort(ideal_zf_numerator_map.begin(), ideal_zf_numerator_map.end(),
 ///        [](const auto& a, const auto& b)
 ///    {
@@ -317,7 +317,7 @@ FORCE_INLINE f32 toNormalizedStripe(const StripeAccum& stripe, f32 phase)
 ///        return a.second < b.second;
 ///    });
 ///
-///    // _ChatGPT_ Remove exact duplicate pairs (both first and second equal).
+///    // remove exact duplicate pairs (both first and second equal).
 ///    ideal_zf_numerator_map.erase(
 ///        std::unique(ideal_zf_numerator_map.begin(), ideal_zf_numerator_map.end(),
 ///        [](const auto& a, const auto& b)
@@ -371,50 +371,53 @@ void Mandelbrot_Scene::calculate_normalize_info()
         }
     });
 
-
-    Thread::forEachBatch(norm_field.world_field, [&](std::span<NormalizationPixel> batch, int ti)
-    {
-        auto& bucket = buckets[ti];
-        u64&  total_w = bucket.total_w;
-        auto& hist_w  = bucket.hist_w;
-
-        f64& sum_wstripe = bucket.sum_wstripe;
-
-        for (NormalizationPixel& field_pixel : batch)
-        {
-            f64 depth = field_pixel.depth;
-
-            if (depth < INSIDE_MANDELBROT_SET_SKIPPED)
-            {
-                // convert weight to fixed-point
-                u64 w = (u64)std::llround((f64)field_pixel.weight * (f64)W_SCALE);
-                total_w += w;
-
-                f32 normalized_stripe = toNormalizedStripe<F>(field_pixel.stripe, stripe_params.phase);
-
-                size_t bin = (size_t)std::floor(normalized_stripe * (BINS - 1));
-                bin = std::clamp(bin, (size_t)0, BINS - 1);
-                hist_w[bin] += w;
-
-                // sum up weighted features
-                sum_wstripe += w * normalized_stripe;
-            }
-        }
-    });
-
-    std::array<u64, BINS> hist_w{};
     u64 total_w = 0;
     f64 total_wstripe = 0;
 
-    for (auto& bucket : buckets)
+    if (!steady_zoom)
     {
-        std::array<u64, BINS>& bucket_hist_w = bucket.hist_w;
+        Thread::forEachBatch(norm_field.world_field, [&](std::span<NormalizationPixel> batch, int ti)
+        {
+            auto& bucket = buckets[ti];
+            u64& total_w = bucket.total_w;
+            auto& hist_w = bucket.hist_w;
 
-        for (int bin = 0; bin < BINS; bin++)
-            hist_w[bin] += bucket_hist_w[bin];
+            f64& sum_wstripe = bucket.sum_wstripe;
 
-        total_w       += bucket.total_w;
-        total_wstripe += bucket.sum_wstripe;
+            for (NormalizationPixel& field_pixel : batch)
+            {
+                f64 depth = field_pixel.depth;
+
+                if (depth < INSIDE_MANDELBROT_SET_SKIPPED)
+                {
+                    // convert weight to fixed-point
+                    u64 w = (u64)std::llround((f64)field_pixel.weight * (f64)W_SCALE);
+                    total_w += w;
+
+                    f32 normalized_stripe = toNormalizedStripe<F>(field_pixel.stripe, stripe_params.phase);
+
+                    size_t bin = (size_t)std::floor(normalized_stripe * (BINS - 1));
+                    bin = std::clamp(bin, (size_t)0, BINS - 1);
+                    hist_w[bin] += w;
+
+                    // sum up weighted features
+                    sum_wstripe += w * normalized_stripe;
+                }
+            }
+        });
+
+        std::array<u64, BINS> hist_w{};
+       
+        for (auto& bucket : buckets)
+        {
+            std::array<u64, BINS>& bucket_hist_w = bucket.hist_w;
+
+            for (int bin = 0; bin < BINS; bin++)
+                hist_w[bin] += bucket_hist_w[bin];
+
+            total_w += bucket.total_w;
+            total_wstripe += bucket.sum_wstripe;
+        }
     }
 
     // stripe magnutide (histogram version - what the below approximation tries to mimic)
@@ -442,11 +445,20 @@ void Mandelbrot_Scene::calculate_normalize_info()
     ///f32 stripe_mag = stripe_mag_from_hist ? stripe_mag_hist : stripe_mag_dynamic;
 
     f32 stripe_mag = stripe_mag_dynamic;
-    f32 stripe_mean = (f32)(total_wstripe / (f64)total_w);
+    f32 stripe_mean;
 
+    if (!steady_zoom)
+    {
+        stripe_mean = (f32)(total_wstripe / (f64)total_w);
+    }
+    else
+    {
+        stripe_mean = stripe_mean_locked;
+    }
+
+    active_field->mean_stripe = stripe_mean;
     active_field->stable_min_dist = stable_min_dist;
     active_field->stable_max_dist = stable_max_dist;
-    active_field->mean_stripe = stripe_mean;
 
     dist_tone   .setParams(dist_tone_params);
     stripe_tone .setParams(stripe_tone_params);
@@ -475,7 +487,7 @@ void Mandelbrot_Scene::calculate_normalize_info()
 
 
 /// ----- calculates final_iter, final_dist, final_stripe -----
-template<typename T, KernelFeatures F, bool Normalize_Depth, bool Invert_Dist>
+template<typename T, KernelFeatures F, bool Normalize_Depth, bool Invert_Dist, bool Show_Optimized>
 void Mandelbrot_Scene::normalize_field()
 {
     f64 stable_min_dist = active_field->stable_min_dist;
@@ -484,11 +496,31 @@ void Mandelbrot_Scene::normalize_field()
     f64 cycle_iters = active_field->log_color_cycle_iters;
     f32 cycle_dist = (f32)active_field->cycle_dist_value;
 
+    f32 iter_ratio, dist_ratio, stripe_ratio;
+    shadingRatios(
+        iter_weight, dist_weight, stripe_weight,
+        iter_ratio, dist_ratio, stripe_ratio
+    );
+
     active_bmp->forEachPixel([&](int x, int y)
     {
         EscapeFieldPixel& field_pixel = active_field->at(x, y);
         f64 depth = field_pixel.depth;
-        if (depth >= INSIDE_MANDELBROT_SET_SKIPPED || active_field->get_skip_flag(x, y)) return;
+        //if (depth >= INSIDE_MANDELBROT_SET_SKIPPED || active_field->get_skip_flag(x, y)) return;
+        if constexpr (Show_Optimized)
+        {
+            if (active_field->get_skip_flag(x, y))
+            {
+                field_pixel.final_depth = -2.0f;
+                return;
+            }
+        }
+
+        if (depth >= INSIDE_MANDELBROT_SET_SKIPPED)
+        {
+            field_pixel.final_depth = -1.0f;
+            return;
+        }
 
         f64 final_depth{};
         f64 final_dist{};
@@ -518,68 +550,12 @@ void Mandelbrot_Scene::normalize_field()
             final_stripe = stripe_tone.apply(s) - 0.5f;
         }
 
-        field_pixel.final_depth  = (f32)final_depth;
-        field_pixel.final_dist   = (f32)final_dist;
-        field_pixel.final_stripe = final_stripe;
+        field_pixel.final_depth  = iter_ratio * (f32)final_depth;
+        field_pixel.final_dist   = dist_ratio * (f32)final_dist;
+        field_pixel.final_stripe = stripe_ratio * final_stripe;
     });
-}
 
-/// ----- shades pixels based on final_iter, final_dist, final_stripe -----
-template<bool Highlight_Optimized_Interior>
-void Mandelbrot_Scene::shadeBitmap()
-{
-    f64 iter_ratio, dist_ratio, stripe_ratio;
-    shadingRatios(
-        iter_weight, dist_weight, stripe_weight,
-        iter_ratio, dist_ratio, stripe_ratio
-    );
-
-    active_bmp->forEachPixel([&](int x, int y)
-    {
-        EscapeFieldPixel& field_pixel = active_field->at(x, y);
-
-        if (field_pixel.depth >= INSIDE_MANDELBROT_SET_SKIPPED)
-        {
-            if constexpr (Highlight_Optimized_Interior)
-            {
-                if (field_pixel.depth == INSIDE_MANDELBROT_SET_SKIPPED)
-                    active_bmp->setPixel(x, y, 0xFF7F007F);
-                else
-                    active_bmp->setPixel(x, y, 0xFF000000);
-            }
-            else
-            {
-                active_bmp->setPixel(x, y, 0xFF000000);
-            }
-            return;
-        }
-
-        uint32_t u32;
-
-        f32 iter_v = field_pixel.final_depth;
-        f32 dist_v = field_pixel.final_dist;
-        f32 stripe_v = field_pixel.final_stripe;
-
-        f32 w_iter_v   = (iter_v   * (f32)iter_ratio);
-        f32 w_dist_v   = (dist_v   * (f32)dist_ratio);
-        f32 w_stripe_v = (stripe_v * (f32)stripe_ratio);
-
-        f32 combined_t = mixKernelFeatures(w_iter_v, w_dist_v, w_stripe_v,
-            iter_x_dist_weight,  
-            dist_x_stripe_weight,
-            stripe_x_iter_weight,
-            iter_x_distStripe_weight,
-            dist_x_iterStripe_weight,
-            stripe_x_iterDist_weight
-        );
-        combined_t = math::wrap01(combined_t);
-
-        if (isfinite(combined_t))
-        {
-            gradient_shifted.unguardedRGBA(combined_t, u32);
-            active_bmp->setPixel(x, y, u32);
-        }
-    });
+    active_field->fillFeaturesTexureData();
 }
 
 SIM_END;

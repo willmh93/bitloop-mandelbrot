@@ -8,6 +8,10 @@
 
 #include "Cardioid/Cardioid.h"
 
+// external
+
+#include "external/TextEditor.h"
+
 // Mandelbrot includes
 
 #include "types.h"
@@ -36,11 +40,11 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
     std::string load_example_name;
 
     // ────── examples ──────
-    static inline const MandelExampleMap mandel_presets = generateMandelPresets();
+    MandelBookmarkManager bookmark_manager;
     bool rendering_examples = false;
     int rendering_example_i = 0;
+    bool ignore_preset_filters = false;
     std::string render_batch_name;
-
 
     // ────── threads ──────
     static constexpr int MAX_THREADS = 0; // 0 = max threads
@@ -83,7 +87,11 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
 
     // ────── saving & loading / URL ──────
     std::string serializeState() const { return serialize(); }
-    void loadState(std::string_view data) { deserialize(data); }
+    void loadState(std::string_view data) 
+    {
+        deserialize(data); 
+        update_editor_shader_source = true;
+    }
 
     std::string getURL() const;
 
@@ -104,6 +112,44 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
 
     CanvasImage128* pending_bmp = nullptr; // ptr to the unfinished bitmap
     CanvasImage128* active_bmp = nullptr;  // ptr to the finished displayed bitmap
+
+    // ────── shading ──────
+    static inline const char* init_shader_source =
+        "// @pass base\n"
+        "return sampleGradient(wrap01(iter + dist + stripe));\n";
+
+    bool update_editor_shader_source = false;
+
+    std::vector<ShaderPassSurfaces> pass_surfaces;
+    const ShaderPassSurfaces* getPassSurfaces(int phase) const {
+        return &pass_surfaces[size_t(phase)];
+    }
+
+    GradientTexture gradient_tex;
+    mutable GLuint black1x1Tex = 0;
+
+    GLuint ensureBlack1x1Tex() const noexcept
+    {
+        if (black1x1Tex != 0)
+            return black1x1Tex;
+
+        const uint8_t rgba[4] = { 0, 0, 0, 255 };
+
+        glGenTextures(1, &black1x1Tex);
+        glBindTexture(GL_TEXTURE_2D, black1x1Tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        return black1x1Tex;
+    }
 
 
     bool iter_hist_visible = false;
@@ -134,7 +180,7 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
     MandelStats stats;
     
 
-    // ────── dynamic ──────
+    // ────── compute ──────
     bool           display_intro = true;
     double         log_color_cycle_iters = 0.0;
     int            iter_lim = 0; // real iteration limit fed to mandelbrot kernel
@@ -148,10 +194,17 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
     // phase 1 = 3x smaller field
     // phase 2 = full resolution field
     int  computing_phase = 0;
+    int  active_phase = 0;
+
     bool first_frame = true;
     bool frame_complete = false;  // Similar to finished_compute, but not cleared until next compute starts
     bool final_frame_complete = true;
     DDQuad world_quad{};
+
+    bool renormalize = false;
+    bool reshade = false;
+
+    
 
     // ────── interior-forwarding optimization ──────
     struct {
@@ -183,8 +236,10 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
 
     // ────── deep-zoom animation (temporary until timeline feature added) ──────
     bool steady_zoom = false;
-    f128 steady_zoom_mult_speed{ 0.01 };
-    //f128 steady_zoom_mult_speed{ 0.05 }; // faster test zoom
+    bool record_steady_zoom = false;
+    double steady_zoom_mult_speed = 0.01;
+    double steady_zoom_rotate_speed = 0.0;
+    float stripe_mean_locked = 0.0;
     float steady_zoom_pct = 0;
     int tween_frames_elapsed = 0;
     int tween_expected_frames = 0;
@@ -216,10 +271,6 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
     {
         using ViewModel::ViewModel;
 
-
-        MandelBookmarkManager bookmark_manager;
-        MandelBookmarkList examples_list;
-
         // dialog flags
         bool show_save_dialog = false;
         bool show_load_dialog = false;
@@ -241,7 +292,12 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
 
         int selected_preset_i = 0;
 
+        TextEditor editor;
+        float editorHeight = 350.0f;
+
         void init() override;
+        void destroy() override;
+
         void overlay() override;
         void sidebar() override;
 
@@ -253,9 +309,10 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
         void populateExamples();
         void populateCameraView();
         void populateQualityOptions();
-        void populateColorCycleOptions();
-        void populateGradientShiftOptions();
-        void populateGradientPicker();
+        void populateParameterOptions();
+        void populateShaderEditor();
+        void populateGradientOptions();
+        void populateAnimation();
         void populateStats();
 
         void populateExperimental();
@@ -280,11 +337,12 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
     template<typename T, KernelFeatures F>
     void calculate_normalize_info();
 
-    template<typename T, KernelFeatures F, bool Normalize_Depth, bool Invert_Dist>
+    template<typename T, KernelFeatures F, bool Normalize_Depth, bool Invert_Dist, bool Show_Optimized>
     void normalize_field();
 
-    template<bool Highlight_Optimized_Interior>
-    void shadeBitmap();
+    //void updateShaderPass(int pass, std::string_view userShadeFunc);
+    //void updateShaderPasses(std::string_view script);
+
 
     // ────── viewport handling ──────
     bool mandelChanged();
@@ -300,7 +358,7 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
     void updateActivePhaseAndField();
     bool processCompute();
     void processCapturing(bool finished_compute, bool reshade);
-    void processUndoRedo(bool normalization_opts_changed);
+    void processUndoRedo(bool normalization_opts_changed, bool gradient_changed);
 
     #if MANDEL_EXPERIMENTAL_TESTS
     double input_angle = 0.0;
@@ -316,6 +374,8 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
     #endif
 
     void viewportProcess(Viewport* ctx, double dt) override;
+
+    void renderShaderChain(Viewport* ctx) const;
     void viewportDraw(Viewport* ctx) const override;
 
     void collectStats(bool renormalized);

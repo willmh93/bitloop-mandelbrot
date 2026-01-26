@@ -173,7 +173,9 @@ double Mandelbrot_Scene::lerpState(
         this->iter_params.cycle_iter_dynamic_limit = b.iter_params.cycle_iter_dynamic_limit;
 
         this->show_axis = b.show_axis;
-        this->show_color_animation_options = b.show_color_animation_options;
+        this->animate_gradient_shift = b.animate_gradient_shift;
+        this->animate_gradient_hue = b.animate_gradient_hue;
+        this->animate_stripe_phase = b.animate_stripe_phase;
     }
 
     // === Lerp quality ===
@@ -213,7 +215,7 @@ void Mandelbrot_Scene::updateTweening(double dt)
                     tween_expected_frames = stepsToReach(
                         state_a.camera.relativeZoom<f128>(),
                         state_b.camera.relativeZoom<f128>(),
-                        1.0 + steady_zoom_mult_speed); // seconds
+                        f128(1.0 + steady_zoom_mult_speed)); // seconds
 
 
                     //static double ease_duration = 1.0; // seconds
@@ -227,7 +229,8 @@ void Mandelbrot_Scene::updateTweening(double dt)
 
                     ///camera.zoom *= 1.0 + steady_zoom_mult_speed;
                     camera.setRelativeZoom(camera.relativeZoom<f128>() * (1.0 + steady_zoom_mult_speed));
-                    camera.setRotation(camera.rotation() + math::toRadians(0.05));
+                    //camera.setRotation(camera.rotation() + math::toRadians(0.05));
+                    camera.setRotation(camera.rotation() + steady_zoom_rotate_speed);
 
                     steady_zoom_pct = (float)math::lerpFactor(
                         toNormalizedZoom(camera.relativeZoom<f128>()),
