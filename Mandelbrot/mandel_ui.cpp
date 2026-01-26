@@ -25,9 +25,6 @@ void Mandelbrot_Scene::UI::init()
     bookmark_manager.loadCategoryDirs("/data/bookmarks");
     bookmark_manager.ensureCategory("Examples");
 
-    constexpr bool force_update_bookmarks = 0;
-    constexpr bool tune_dictionary = 0;
-
     #if MANDEL_UPDATE_ALL_BOOKMARKS
     {
         for (int i = 0; i < bookmark_manager.size(); i++)
