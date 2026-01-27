@@ -106,12 +106,13 @@ struct MandelBookmark : public Hashable
     }
     void loadThumbnail(std::string_view path)
     {
-        //blPrint() << "loadThumbnail: " << path;
+        // used when loading from directory
         if (thumb_tex == 0)
             thumb_tex = loadGLTextureRGBA8(path.data());
     }
     void loadThumbnail(const bytebuf& data, int w, int h)
     {
+        // used when inserting bookmark from capture
         thumb_tex = createGLTextureRGBA8(data.data(), w, h);
     }
 

@@ -126,11 +126,6 @@ void Mandelbrot_Scene::UI::init()
     editor.SetText(Mandelbrot_Scene::init_shader_source);
     //editor.SetText(editor_shader_txt);
 }
-void Mandelbrot_Scene::UI::destroy()
-{
-    bl_scoped(bookmark_manager);
-    bookmark_manager.destroyAllTextures();
-}
 
 void Mandelbrot_Scene::UI::sidebar()
 {

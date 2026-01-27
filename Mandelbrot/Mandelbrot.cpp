@@ -25,37 +25,32 @@ void Mandelbrot_Scene::sceneStart()
     for (const auto& preset : all_presets)
         valid_presets[preset.hashedAlias()] = true;
 
-    // todo: Stop this getting called twice on startup
     generateGradientFromPreset(gradient, GradientPreset::CLASSIC);
 
     cardioid_lerper.create(math::tau / 5760.0, 0.005);
 
     font = NanoFont::create("/data/fonts/DroidSans.ttf");
 
-    createShaderPasses(init_shader_source, pass_surfaces);
+    for (int i=0; i<3; i++)
+        phase_shaders[i].updateFragmentSource(init_shader_source);
 }
 
 void Mandelbrot_Scene::sceneDestroy()
 {
-    blPrint() << "Mandelbrot_Scene::sceneDestroy()";
-
-    main_window()->deferredGuiDestructionQueue().enqueue([&]() noexcept
+    main_window()->threadQueue().post([&]()
     {
-        if (black1x1Tex != 0) 
-            glDeleteTextures(1, &black1x1Tex);
-
         field_1x1.destroyFeaturesTexture();
         field_3x3.destroyFeaturesTexture();
         field_9x9.destroyFeaturesTexture();
 
         gradient_tex.destroy();
+
+        bookmark_manager.destroyAllTextures();
     });
 }
 
 void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
 {
-    blPrint() << "Mandelbrot_Scene::sceneMounted()";
-
     //camera->setCameraStageSnappingSize(1);
     camera.setSurface(ctx);
     camera.setOriginViewportAnchor(Anchor::CENTER);
@@ -132,7 +127,9 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     // ────── reshade if flagged ──────
     if (Changed(shader_source_txt))
     {
-        createShaderPasses(shader_source_txt, pass_surfaces);
+        for (int i = 0; i < 3; i++)
+            phase_shaders[i].updateFragmentSource(shader_source_txt);
+        
         reshade = true;
     }
 
@@ -155,21 +152,15 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
 
 void Mandelbrot_Scene::renderShaderChain(Viewport* ctx) const
 {
-    GLuint prevTex = ensureBlack1x1Tex();
-    FVec2 inv_size = FVec2(1.0f,1.0f) / (FVec2)ctx->outputSize();
+    // todo: Not right when you do high SSAA renders?
+    FVec2 inv_size = FVec2(1.0f, 1.0f) / (FVec2)ctx->outputSize();
 
-    for (int pass = 0; pass < pass_surfaces.size(); pass++)
+    phase_shaders[active_phase].render(active_bmp->width(), active_bmp->height(), [&](const ShaderSurface& s)
     {
-        const ShaderSurface* surface = getPassSurfaces(pass)->getSurface(active_phase);
-        surface->render(active_bmp->width(), active_bmp->height(), [&](const ShaderSurface& s)
-        {
-            s.setUniform2f("u_outTexel", inv_size.x, inv_size.y);
-            s.bindTexture2D("u_prev", prevTex, 0);
-            s.bindTexture2D("u_features", active_field->features_tex, 1);
-            s.bindTexture2D("u_gradient", gradient_tex.getTexture(), 2);
-        });
-        prevTex = surface->texture();
-    }
+        s.setUniform2f("u_outTexel", inv_size.x, inv_size.y);
+        s.bindTexture2D("u_features", active_field->features_tex);
+        s.bindTexture2D("u_gradient", gradient_tex.getTexture());
+    });
 }
 
 void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
@@ -183,17 +174,14 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
     // apply 128-bit camera world transformation
     ctx->setTransform(camera.getTransform());
 
-    const ShaderSurface* composite_surface = getPassSurfaces((int)pass_surfaces.size() - 1)->getSurface(active_phase);
+    const ShaderSurface* composite_surface = phase_shaders[active_phase].outputSurface();
 
     // Draw active phase bitmap
-    if (composite_surface)
-    {
-        ///ctx->setGlobalAlpha(0.5);
-        ctx->drawShaderSurface(*composite_surface, 0.0f, 0.0f, (f32)ctx->width(), (f32)ctx->height());
-        ///ctx->setGlobalAlpha(1.0);
-    }
-
-    double zoom_mag = camera.relativeZoom<double>();
+    ///ctx->setGlobalAlpha(0.5);
+    ctx->drawShaderSurface(*composite_surface, 0.0f, 0.0f, (f32)ctx->width(), (f32)ctx->height());
+    ///ctx->setGlobalAlpha(1.0);
+    
+    double zoom_mag = camera.relativeZoom<f64>();
 
     if (show_axis && zoom_mag < 1.0e7)
         ctx->drawWorldAxis(0.5, 0, 0.5);

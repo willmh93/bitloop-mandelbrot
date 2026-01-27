@@ -75,7 +75,7 @@ void Mandelbrot_Scene::UI::populateStats()
                     for (int i = 0, j = 0; i <= 4; i++) {
                         if ((bool)(mandel_features & (1 << i))) {
                             if (j++ != 0) ss << " | ";
-                            ss << MandelSmoothingNames[i + 1];
+                            ss << MandelFeatureNames[i + 1];
                         }
                     }
                     TableRowText2("Computing Features", "%s", ss.str().c_str());

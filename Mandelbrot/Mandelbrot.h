@@ -7,7 +7,6 @@
 #include <cmath>
 
 #include "Cardioid/Cardioid.h"
-
 // external
 
 #include "external/TextEditor.h"
@@ -119,37 +118,9 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
         "return sampleGradient(wrap01(iter + dist + stripe));\n";
 
     bool update_editor_shader_source = false;
-
-    std::vector<ShaderPassSurfaces> pass_surfaces;
-    const ShaderPassSurfaces* getPassSurfaces(int phase) const {
-        return &pass_surfaces[size_t(phase)];
-    }
+    MultiPassShader phase_shaders[3];
 
     GradientTexture gradient_tex;
-    mutable GLuint black1x1Tex = 0;
-
-    GLuint ensureBlack1x1Tex() const noexcept
-    {
-        if (black1x1Tex != 0)
-            return black1x1Tex;
-
-        const uint8_t rgba[4] = { 0, 0, 0, 255 };
-
-        glGenTextures(1, &black1x1Tex);
-        glBindTexture(GL_TEXTURE_2D, black1x1Tex);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-
-        glBindTexture(GL_TEXTURE_2D, 0);
-
-        return black1x1Tex;
-    }
 
 
     bool iter_hist_visible = false;
@@ -267,9 +238,9 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
     Cardioid::CardioidLerper cardioid_lerper;
 
     // ────── user interface ──────
-    struct UI : ViewModel
+    struct UI : BufferedInterfaceModel
     {
-        using ViewModel::ViewModel;
+        using BufferedInterfaceModel::BufferedInterfaceModel;
 
         // dialog flags
         bool show_save_dialog = false;
@@ -296,13 +267,11 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
         float editorHeight = 350.0f;
 
         void init() override;
-        void destroy() override;
 
         void overlay() override;
         void sidebar() override;
 
         void launchBookmark(std::string_view data);
-
 
         // UI sections
         void populateSavingLoading();
@@ -324,6 +293,9 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
 
         void populateCaptureOptions();
     };
+
+
+
 
     // ────── simulation processing ──────
     void sceneStart() override;
