@@ -44,18 +44,18 @@ inline double originalAngleBinarySearch(double mx, double my)
     return (left + right) / 2.0;
 }
 
-// Newton's Method to find theta that minimizes distance^2 from (px,py)
 inline double originalAngleFromPoint(
     double px, 
     double py, 
     double tolerance = 1e-10, 
     int maxIter = 50)
 {
-    // Check if inside unstable region for Newton's method
+    // binary search in unstable region (slower)
     double y_bound = 0.001 + 4 * pow(px - 0.23, 2.0);
     if (px >= 0.25 && py < y_bound && py > -y_bound)
         return originalAngleBinarySearch(px, py);
 
+    // Newton's method to find theta that minimizes distance^2 from (px,py)
     double initialGuess = atan2(py, px - 0.25);
     double theta = initialGuess;
 
@@ -70,13 +70,12 @@ inline double originalAngleFromPoint(
         double X = (0.5 * _cos - 0.25 * _cos2) - px;
         double Y = (0.5 * _sin - 0.25 * _sin2) - py;
 
-        // First derivative f'(theta)
+        // First derivative
         double d1 = 2.0 * (
             X * (-0.5 * _sin + 0.5 * _sin2)
-            + Y * (0.5 * _cos - 0.5 * _cos2)
-            );
+            + Y * (0.5 * _cos - 0.5 * _cos2));
 
-        // Second derivative f''(theta)
+        // Second derivative
         double d2 = 2.0 * (((-0.5 * _sin + 0.5 * _sin2) * (-0.5 * _sin + 0.5 * _sin2)) + X * (-0.5 * _cos + _cos2))
             + 2.0 * (((0.5 * _cos - 0.5 * _cos2) * (0.5 * _cos - 0.5 * _cos2)) + Y * (-0.5 * _sin + _sin2));
 
@@ -127,8 +126,6 @@ inline void cardioidPolarCoord(
 
     double dx = px - tangent_x;
     double dy = py - tangent_y;
-
-    //double x1 = dx * cos(tangent_angle) + dy * sin(tangent_angle);
     double y1 = dy * cos(tangent_angle) - dx * sin(tangent_angle);
 
     dist = -y1;
@@ -146,7 +143,6 @@ inline void cardioidPolarCoord(
 
 inline DVec2 fromPolarCoordinate(double angle, double dist)
 {
-    //double angle = (perp_angle + M_PI / 2.0) / 1.5;
     double tangent_angle = 1.5 * angle;
     double perp_angle = tangent_angle - math::pi / 2.0;
     double tx = 0.5 * cos(angle) - 0.25 * cos(angle * 2.0);
@@ -156,9 +152,7 @@ inline DVec2 fromPolarCoordinate(double angle, double dist)
     return { px, py };
 }
 
-
-double originalAngleFromPerpAngle(
-    double perp_angle);
+double originalAngleFromPerpAngle(double perp_angle);
 
 struct CardioidStepInfo
 {
@@ -214,7 +208,6 @@ struct CumulativeCardioid : public std::vector<CardioidStepInfo>
         return ret;
     }
 };
-
 
 struct CardioidLerper : public std::vector<LerpedCardioid>
 {
@@ -354,10 +347,7 @@ struct CardioidLerper : public std::vector<LerpedCardioid>
         double dy = y - p.y;
         double y1 = dy * cos(tangent_angle) - dx * sin(tangent_angle);
 
-        return {
-            angle,
-            -y1
-        };
+        return {angle, -y1};
     }
 
     DVec2 project(double angle, double dist, double weight) const
@@ -372,7 +362,7 @@ struct CardioidLerper : public std::vector<LerpedCardioid>
 
         const LerpedCardioid& a = at(cardioid_i0);
         const LerpedCardioid& b = at(cardioid_i1);
-        double f_len = static_cast<double>(a.size());
+        double f_len = static_cast<double>(a.size()-1);
 
         double segment_i_ratio = angle / math::tau;
         int segment_i = static_cast<int>(segment_i_ratio * f_len);
@@ -389,27 +379,30 @@ struct CardioidLerper : public std::vector<LerpedCardioid>
 
 struct Cardioid_Scene : public Scene<Cardioid_Scene>
 {
+    std::string name() const override { return "Interactive Cardioid"; }
+
     // --- Scene management ---
-    CameraInfo          camera;
+    CameraInfo      camera;
     CameraNavigator navigator;
 
-    bool   show_offset = false;
+    bool   show_offset = false; // x-offset to match Mandelbrot
     bool   flatten = false;
     bool   interactive = false;
-    bool   animate = true;
+    bool   animate = false;
 
     double ani_angle = 0.0;
-    double ani_inc = math::toRadians(2.0);
+    double ani_inc = math::toRadians(1.0);
 
-    double interact_angle_step = math::tau / 720.0;
     double interact_spin_mult = 1.0;
-    double interact_angle = 0.0;
-    double interact_dist = 0.0;
+    double interact_dist = 0.25;
 
-    struct UI : ViewModel
+    CumulativeCardioid cumulative_cardioid;
+    CardioidLerper cumulative_cardioid_lookup;
+
+    struct UI : BufferedInterfaceModel
     {
-        using ViewModel::ViewModel;
-        void sidebar();
+        using BufferedInterfaceModel::BufferedInterfaceModel;
+        void sidebar() override;
     };
     
     void sceneStart() override;
@@ -419,13 +412,8 @@ struct Cardioid_Scene : public Scene<Cardioid_Scene>
     // --- Update methods ---
 
     void plotCumulativeCardioid(Viewport* ctx, const CumulativeCardioid &items, double angle_mult=1.0);
-
-    CumulativeCardioid cumulative_cardioid;
-    CardioidLerper cumulative_cardioid_lookup;
-
     void fullPlot(Viewport* ctx, double scale, double ox) const;
     void fullPlotAlternative(Viewport* ctx, double scale, double ox) const;
-    //void fullPlotAlternative2(Viewport* ctx, double scale, double ox);
     void animatePlot(Viewport* ctx, double scale, double ox, double orig_angle, double dist) const;
 
     // --- Viewport ---
@@ -437,6 +425,8 @@ struct Cardioid_Scene : public Scene<Cardioid_Scene>
 
 struct Cardioid_Graph_Scene : public BasicScene
 {
+    std::string name() const override { return "Angle Visualizer"; }
+
     struct Config {
         Cardioid_Scene* main_scene;
     };
@@ -445,31 +435,30 @@ struct Cardioid_Graph_Scene : public BasicScene
         main_scene(info.main_scene)
     {}
 
-    CameraInfo          camera;
+    CameraInfo      camera;
     CameraNavigator navigator;
 
     Cardioid_Scene* main_scene;
-    CanvasImage bmp;
+    WorldImage bmp;
 
     void sceneStart() override;
 
     void sceneMounted(Viewport* viewport) override;
     void viewportProcess(Viewport* ctx, double dt) override;
     void viewportDraw(Viewport* ctx) const override;
+
+    void onEvent(Event e) override;
 };
 
 struct Cardioid_Project : public BasicProject
 {
-    //static std::vector<std::string> categorize() {
-    //    return { "Fractal", "Mandelbrot", "Main Cardioid" };
-    //}
-
     static ProjectInfo info()
     {
-        return ProjectInfo({ "Fractal", "Mandelbrot", "Main Cardioid" });
+        return ProjectInfo({ "Fractal", "Mandelbrot", "Cardioid" });
     }
 
     void projectPrepare(Layout& layout) override;
+    bool sidebarVisible() const override { return false; }
 };
 
 SIM_END;

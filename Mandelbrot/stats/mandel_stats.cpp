@@ -1,4 +1,4 @@
-#include "Mandelbrot.h"
+#include "../Mandelbrot.h"
 #include <format>
 
 SIM_BEG;
@@ -44,22 +44,23 @@ void Mandelbrot_Scene::UI::populateStats()
         const float col1_w = ImGui::CalcTextSize("Active float precision").x
             + ImGui::GetStyle().CellPadding.x;
 
-        bl_pull(stats, camera, mandel_features, steady_zoom_pct, dt_avg, computing_phase);
+        bl_pull(stats, camera, deduced_kernel_mode, float_type, mandel_features, steady_zoom_pct, dt_last, computing_phase);
 
         int decimals = camera.getPositionDecimals();
 
         // --- compute info ---
         {
-            ImGui::BeginLabelledBox("Compute Info");
+            ImGui::BeginLabelledBox("Compute");
             
             if (ImGui::BeginTable("##compute_stats", 2, flags, ImVec2(-FLT_MIN, 0.0f)))
             {
                 SetupTable2(col1_w);
 
                 // float precision
-                const char* float_precision = FloatingPointTypeNames[(int)getRequiredFloatType((KernelFeatures)mandel_features, camera.relativeZoom<f128>())];
+                const char* float_precision = FloatingPointTypeNames[(int)float_type];
                 TableRowText2("Active float precision", float_precision);
-                TableRowText2("Current phase", "%d/2", computing_phase);
+                TableRowText2("Current phase", "%d/%d", computing_phase, PHASE_COUNT-1);
+                TableRowText2("Kernel", KernelModeNames[(int)deduced_kernel_mode]);
 
                 #if MANDEL_EXTENDED_FIELD_STATS
                 ImGui::Spacing();
@@ -81,19 +82,102 @@ void Mandelbrot_Scene::UI::populateStats()
                     TableRowText2("Computing Features", "%s", ss.str().c_str());
                 }
 
-                // compute timer
-                TableRowText2("Full compute time", "%.0f ms", dt_avg);
+                #if MANDEL_DEV_MODE
+                bl_pull(compute_timeout);
+                TableRowText2("Compute timeout", "%d ms", compute_timeout);
+                #endif
 
+                // compute timer
+                TableRowText2("Full compute time", "%.0f ms", dt_last);
+
+                #if MANDEL_DEV_MODE
+                TableRowSpacing2();
+                TableRowText2("Phase timers:", "");
+
+                bl_pull(phase_timers, starting_phase, final_frame_complete);
+                for (int phase = 0; phase < PHASE_COUNT; phase++)
+                {
+                    std::string phase_txt = "Phase: ";
+                    phase_txt += std::to_string(phase);
+
+                    if (phase > starting_phase && (phase < computing_phase || final_frame_complete))
+                    {
+                        double mult = (phase_timers[phase] / phase_timers[phase-1]);
+                        TableRowText2(phase_txt.c_str(), "%.2f ms (%.1fx)", phase_timers[phase], mult);
+                    }
+                    else
+                    {
+                        if (phase >= starting_phase)
+                            TableRowText2(phase_txt.c_str(), "%.2f ms", phase_timers[phase]);
+                        else
+                            TableRowText2(phase_txt.c_str(), "-");
+                    }
+                }
+
+                bl_pull(phase_elapsted_estimated_final, phase_elapsed_mult_results, phase_elapsed_mult_sma_result);
+
+                TableRowSpacing2();
+                TableRowText2("Average mults:", "");
+                for (int phase = 0; phase < PHASE_COUNT; phase++)
+                {
+                    std::string phase_txt = "Phase: ";
+                    phase_txt += std::to_string(phase);
+
+                    TableRowText2(phase_txt.c_str(), "%.1fx", phase_elapsed_mult_results[phase]);
+                }
+
+                TableRowSpacing2();
+                TableRowText2("Avg mult", "%.1fx", phase_elapsed_mult_sma_result);
+                TableRowText2("Expected final phase", "%.4f", phase_elapsted_estimated_final);
+                #endif
+                
                 ImGui::EndTable();
             }
 
             ImGui::EndLabelledBox();
         }
 
-        // --- mouse info ---
         if (!platform()->is_mobile())
         {
-            ImGui::BeginLabelledBox("Mouse info");
+            // --- normalize info ---
+            ImGui::BeginLabelledBox("Normalization Field");
+            if (ImGui::BeginTable("##field_stats", 2, flags, ImVec2(-FLT_MIN, 0.0f)))
+            {
+                SetupTable2(col1_w);
+
+                TableRowText2("Raw:", "");
+                TableRowText2("    ITER min", std::to_string(stats.field_info.raw_min_depth).c_str());
+                TableRowText2("    ITER max", std::to_string(stats.field_info.raw_max_depth).c_str());
+
+                TableRowSpacing2();
+                TableRowText2("    DIST min", std::to_string(stats.field_info.raw_min_dist).c_str());
+                TableRowText2("    DIST max", std::to_string(stats.field_info.raw_max_dist).c_str());
+
+                TableRowSpacing2();
+                TableRowText2("    STRIPE min", std::to_string(stats.field_info.raw_min_stripe).c_str());
+                TableRowText2("    STRIPE max", std::to_string(stats.field_info.raw_max_stripe).c_str());
+
+                //
+
+                TableRowSpacing2();
+                TableRowText2("Final:", "");
+                TableRowText2("    ITER min", std::to_string(stats.field_info.final_min_depth).c_str());
+                TableRowText2("    ITER max", std::to_string(stats.field_info.final_max_depth).c_str());
+
+                TableRowSpacing2();
+                TableRowText2("    DIST min", std::to_string(stats.field_info.final_min_dist).c_str());
+                TableRowText2("    DIST max", std::to_string(stats.field_info.final_max_dist).c_str());
+
+                TableRowSpacing2();
+                TableRowText2("    STRIPE min", std::to_string(stats.field_info.final_min_stripe).c_str());
+                TableRowText2("    STRIPE max", std::to_string(stats.field_info.final_max_stripe).c_str());
+
+                ImGui::EndTable();
+            }
+            ImGui::EndLabelledBox();
+
+            // --- mouse info ---
+            ImGui::BeginLabelledBox("Mouse");
             if (ImGui::BeginTable("##hover_stats", 2, flags, ImVec2(-FLT_MIN, 0.0f)))
             {
                 bl_pull(stripe_params);
@@ -119,34 +203,33 @@ void Mandelbrot_Scene::UI::populateStats()
 
                 TableRowSpacing2();
                 TableRowText2("Raw:", "");
-                TableRowText2("    DEPTH",  (escaped ? std::format("{:.1f} iterations", px.depth) : "<interior>").c_str());
+                TableRowText2("    DEPTH",  (escaped ? std::format("{:.2f} iterations", px.depth) : "<interior>").c_str());
                 TableRowText2("    DIST",   (escaped ? dist_str : "<interior>").c_str());
                 TableRowText2("    STRIPE", (escaped ? std::format("{:.4f}", stripe) : "<interior>").c_str());
 
                 TableRowSpacing2();
                 TableRowText2("Final:", "");
-                TableRowText2("    DEPTH",  (escaped ? std::format("{:.1f}", px.final_depth) : "<interior>").c_str());
-                TableRowText2("    DIST",   (escaped ? std::format("{:.1f}", px.final_dist) : "<interior>").c_str());
-                TableRowText2("    STRIPE", (escaped ? std::format("{:.1f}", px.final_stripe) : "<interior>").c_str());
+                TableRowText2("    DEPTH",  (escaped ? std::format("{:.3f}", px.final_depth) : "<interior>").c_str());
+                TableRowText2("    DIST",   (escaped ? std::format("{:.3f}", px.final_dist) : "<interior>").c_str());
+                TableRowText2("    STRIPE", (escaped ? std::format("{:.3f}", px.final_stripe) : "<interior>").c_str());
 
                 ImGui::EndTable();
             }
-
             ImGui::EndLabelledBox();
         }
 
         // --- camera info ---
         {
-            ImGui::BeginLabelledBox("Camera info");
+            ImGui::BeginLabelledBox("Camera");
             if (ImGui::BeginTable("##camera_stats", 2, flags, ImVec2(-FLT_MIN, 0.0f)))
             {
                 SetupTable2(col1_w);
                 
                 auto format_zoom = [](f128 f) -> std::string { return to_string(f, 5, false, true, true).c_str(); };
-                TableRowText2("Zoom",            "%s",   format_zoom(camera.relativeZoom<f128>()).c_str());
-                #if MANDEL_DEV_MODE
-                TableRowText2("Height",          "%.4f", (f64)toHeight(camera.relativeZoom<f128>()));
-                TableRowText2("Normalized Zoom", "%.4f", (f64)toNormalizedZoom(camera.relativeZoom<f128>()));
+                TableRowText2("Zoom",                "%s",   format_zoom(camera.relativeZoom<f128>()).c_str());
+                #if MANDEL_DEV_MODE                  
+                TableRowText2("Height",              "%.4f", (f64)toHeight(camera.relativeZoom<f128>()));
+                TableRowText2("Normalized Zoom",     "%.4f", (f64)toNormalizedZoom(camera.relativeZoom<f128>()));
                 #endif
 
                 ImGui::EndTable();
@@ -157,7 +240,7 @@ void Mandelbrot_Scene::UI::populateStats()
         // --- capture info ---
         if (!platform()->is_mobile())
         {
-            ImGui::BeginLabelledBox("Capture info");
+            ImGui::BeginLabelledBox("Capture");
             if (ImGui::BeginTable("##capture_stats", 2, flags, ImVec2(-FLT_MIN, 0.0f)))
             {
                 SetupTable2(col1_w);
@@ -177,7 +260,7 @@ void Mandelbrot_Scene::UI::populateStats()
 
 template<bool I, bool D, bool S> void syncHist(EscapeField& field, MandelStats& stats)
 {
-    if constexpr (!I || !D || !S) return;
+    if constexpr (!I && !D && !S) return;
     for (size_t i = 0; i < field.size(); i++)
     {
         EscapeFieldPixel& p = field[i];
@@ -199,19 +282,39 @@ void Mandelbrot_Scene::collectStats(bool renormalized)
     bool finalized_compute = (renormalized && final_frame_complete);
     (void)finalized_compute; // hide warning when no sections use bool
 
+    EscapeField& active_field = activeField();
+    WorldRasterGrid128& active_grid = activeRasterGrid();
+
     // stats for mouse position
-    if (active_field && active_bmp)
     {
-        if (mouse->stage_x >= 0 && mouse->stage_y >= 0 && mouse->stage_x < active_bmp->width() && mouse->stage_y < active_bmp->height())
+        // raw min/max values
+        stats.field_info.raw_min_depth     = active_field.raw_min_depth;
+        stats.field_info.raw_max_depth     = active_field.raw_max_depth;
+        stats.field_info.raw_min_dist      = active_field.raw_min_dist;
+        stats.field_info.raw_max_dist      = active_field.raw_max_dist;
+        stats.field_info.raw_min_stripe    = active_field.raw_min_stripe;
+        stats.field_info.raw_max_stripe    = active_field.raw_max_stripe;
+
+        // final min/max values after normalization/toning/cycling
+        stats.field_info.final_min_depth   = active_field.final_min_depth;
+        stats.field_info.final_max_depth   = active_field.final_max_depth;
+        stats.field_info.final_min_dist    = active_field.final_min_dist;
+        stats.field_info.final_max_dist    = active_field.final_max_dist;
+        stats.field_info.final_min_stripe  = active_field.final_min_stripe;
+        stats.field_info.final_max_stripe  = active_field.final_max_stripe;
+
+        if (mouse->stage_x >= 0 &&
+            mouse->stage_y >= 0 &&
+            mouse->stage_x < active_grid.rasterWidth() &&
+            mouse->stage_y < active_grid.rasterHeight())
         {
             stats.sync(MandelStats::Dirty::hovered_field_pixel);
 
-            IVec2 pos = active_bmp->pixelPosFromWorld(DDVec2(mouse->world_x, mouse->world_y));
-            EscapeFieldPixel* p = active_field->get(pos.x, pos.y);
+            IVec2 pos = active_grid.pixelPosFromWorld(DDVec2(mouse->world_x, mouse->world_y));
+            EscapeFieldPixel* p = active_field.get(pos.x, pos.y);
             if (p) stats.hovered_field_pixel = *p;
 
-            active_bmp->worldPos<f128>((int)mouse->client_x, (int)mouse->client_y, stats.hovered_field_world_pos.x, stats.hovered_field_world_pos.y);
-
+            active_grid.pixelWorldPos<f128>((int)mouse->client_x, (int)mouse->client_y, stats.hovered_field_world_pos.x, stats.hovered_field_world_pos.y);
         }
     }
 
@@ -240,10 +343,6 @@ void Mandelbrot_Scene::collectStats(bool renormalized)
         Changed(dist_hist_visible) ||
         Changed(stripe_hist_visible))
     { 
-        if (!this->active_field) return;
-        EscapeField& field = *this->active_field;
-
-        // Stripe histogram
         if (iter_hist_visible)
         {
             stats.sync(MandelStats::Dirty::iter_histogram);
@@ -262,7 +361,7 @@ void Mandelbrot_Scene::collectStats(bool renormalized)
             stats.stripe_histogram.clear();
         }
   
-        table_invoke(dispatch_table(syncHist, field, stats),
+        table_invoke(dispatch_table(syncHist, active_field, stats),
             iter_hist_visible,
             dist_hist_visible,
             stripe_hist_visible

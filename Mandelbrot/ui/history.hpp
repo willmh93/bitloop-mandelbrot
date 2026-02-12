@@ -1,4 +1,4 @@
-#include "Mandelbrot.h"
+#include "../Mandelbrot.h"
 
 SIM_BEG;
 
@@ -37,16 +37,12 @@ void Mandelbrot_Scene::processUndoRedo(bool normalization_opts_changed [[maybe_u
 
         // check if any normalization opts changed due to user input (ignore changes where animation is in effect)
         bool weights_changed = Changed(iter_weight, dist_weight, stripe_weight);
-        bool shade_formula_changed = Changed(
-            iter_x_dist_weight, dist_x_stripe_weight, stripe_x_iter_weight,
-            iter_x_distStripe_weight, dist_x_iterStripe_weight, stripe_x_iterDist_weight);
-
         bool cycle_iter_opts_changed = Changed(iter_params);
         bool cycle_dist_opts_changed = Changed(dist_params, dist_tone_params);
         bool cycle_stripe_opts_changed = Changed(stripe_tone_params) || (!animate_stripe_phase && Changed(stripe_params.phase));
 
         bool normalization_opts_changed = 
-            (shade_formula_changed || weights_changed || cycle_iter_opts_changed || cycle_dist_opts_changed || cycle_stripe_opts_changed);
+            (weights_changed || cycle_iter_opts_changed || cycle_dist_opts_changed || cycle_stripe_opts_changed);
 
         // check if base gradient changed, or gradient shift changed (only if no animation present)
         bool gradient_opts_changed = Changed(gradient) || (!animate_gradient_shift && Changed(gradient_shift));
@@ -56,11 +52,11 @@ void Mandelbrot_Scene::processUndoRedo(bool normalization_opts_changed [[maybe_u
         if (recomputed || normalization_opts_changed || gradient_opts_changed || animate_opts_changed)
             pending_checkpoint_flag = true;
 
-        if (pending_checkpoint_flag &&       // check a change significant *could* have occured
-            camera_vel_pos.isZero() &&       // check no pan inertia
-            (camera_vel_zoom == 1) &&        // check no zoom inertia
-            !mouse->pressed &&               // check not currently panning
-            !main_window()->isEditingUI())   // check not presently dragging imgui value slider
+        if (pending_checkpoint_flag &&                // check a change significant *could* have occured
+            cam_vel_pos.isZero() &&                   // check no pan inertia
+            (cam_vel_zoom == 1) &&                    // check no zoom inertia
+            !mouse->buttonDown(MouseButton::LEFT) &&  // check not currently panning
+            !main_window()->isEditingUI())            // check not presently dragging imgui value slider
         {
             // serialize mandel state
             std::string serialized_state = serialize();
@@ -92,7 +88,7 @@ void Mandelbrot_Scene::processUndoRedo(bool normalization_opts_changed [[maybe_u
     loading_history_state = false;
 }
 
-void Mandelbrot_Scene::historyKeyEvent(KeyEvent e)
+void Mandelbrot_Scene::historyOnKeyDown(KeyEvent e)
 {
     if (!platform()->is_mobile())
     {

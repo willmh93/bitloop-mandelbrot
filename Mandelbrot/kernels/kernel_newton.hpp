@@ -168,7 +168,7 @@ FORCE_INLINE void newton_kernel(
     {
         depth = INSIDE_MANDELBROT_SET;
         if constexpr (NEED_STRIPES)
-            stripe.escape(0.0);      // keep your existing "no convergence" behaviour
+            stripe.escape(0.0f);
         return;
     }
 
@@ -201,7 +201,7 @@ FORCE_INLINE void newton_kernel(
         }
         else
         {
-            stripe.escape(0.0);
+            stripe.escape(0.0f);
         }
     }
 }
@@ -562,9 +562,6 @@ FORCE_INLINE void mandel_newton_alt_kernel(
     bool converged = false;
     bool bad_newton = false;
 
-    //if constexpr (NEED_STRIPES)
-    //    stripe.n = (int)sp.freq;
-
     while (true)
     {
         if (step_i >= iter_lim)
@@ -763,7 +760,7 @@ FORCE_INLINE void mandel_newton_alt_kernel(
     if (!escaped && !converged)
     {
         depth = INSIDE_MANDELBROT_SET;
-        if constexpr (NEED_STRIPES) stripe.escape(0.0);
+        if constexpr (NEED_STRIPES) stripe.escape(0.0f);
         return;
     }
 
@@ -806,7 +803,7 @@ FORCE_INLINE void mandel_newton_alt_kernel(
     {
         if (escaped)
         {
-            stripe.escape((f64)r2);
+            stripe.escape((f32)r2);
         }
         else
         {

@@ -116,7 +116,7 @@ FORCE_INLINE void kernel_mandel(T x0, T y0, int iter_lim, f64& depth, f64& dist,
     }
 
     if constexpr (NEED_STRIPES)
-        stripe.escape((f64)r2);
+        stripe.escape((f32)r2);
 }
 
 SIM_END;

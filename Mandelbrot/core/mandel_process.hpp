@@ -1,57 +1,54 @@
-﻿#include "Mandelbrot.h"
+﻿#include "../Mandelbrot.h"
 
 #include "compute.h"
 
 SIM_BEG;
 
-void Mandelbrot_Scene::processBatchSnapshot()
+void Mandelbrot_Scene::loadNextBatchSnapshotState()
 {
-    if (rendering_examples)
+    // if "Render All" was clicked, call beginSnapshot() for each preset until done
+    assert(rendering_examples);
+
+    if (!isSnapshotting())
     {
-        if (!isSnapshotting())
+        // no active snapshot processing, check if there is one pending...
+        const auto& examples = bookmark_manager.find("Examples").getItems();
+
+        if (rendering_example_i >= examples.size())
         {
-            const auto& examples = bookmark_manager.find("Examples").getItems();
-
-            ///// no active snapshot processing, check if there is one pending...
-            if (rendering_example_i >= examples.size())
-            {
-                // all examples rendered => end
-                rendering_examples = false;
-                rendering_example_i = 0;
-            }
-            else
-            {
-                // begin new snapshot...
-            
-                // grab example name / state data
-                const auto& example = examples[rendering_example_i];
-
-                const std::string& data = example.data;
-                const std::string name = example.thumbName();
-           
-                std::filesystem::path filepath = render_batch_name;
-                filepath /= name + "_%s";
-            
-                loadState(data);
-            
-                SnapshotPresetList all_presets = main_window()->getSettingsConfig()->enabledImagePresets();
-                SnapshotPresetList filtered    = ignore_preset_filters ?
-                    all_presets : 
-                    all_presets.filtered(valid_presets);
-            
-                beginSnapshotList(filtered, filepath.string().c_str());
-            }
-            
-            rendering_example_i++;
+            // all examples rendered => end
+            rendering_examples = false;
+            rendering_example_i = 0;
         }
+        else
+        {
+            // begin new snapshot...
+            
+            // grab example name / state data
+            const auto& example = examples[rendering_example_i];
+
+            const std::string& data = example.data;
+            const std::string name = example.thumbName();
+           
+            std::filesystem::path filepath = render_batch_name;
+            filepath /= name + "_%s";
+            
+            loadState(data);
+            
+            SnapshotPresetList all_presets = main_window()->getSettingsConfig()->enabledImagePresets();
+            SnapshotPresetList filtered    = ignore_preset_filters ?
+                all_presets : 
+                all_presets.filtered(valid_presets);
+            
+            beginSnapshotList(filtered, filepath.string().c_str());
+        }
+            
+        rendering_example_i++;
     }
 }
 
 void Mandelbrot_Scene::updateAnimation()
 {
-    //if (Changed(show_color_animation_options, show_axis, gradient_shift_step, hue_shift_step))
-    //    savefile_changed = true;
-
     double ani_mult = fpsFactor();
 
     // ────── color cycle animation ──────
@@ -59,41 +56,50 @@ void Mandelbrot_Scene::updateAnimation()
     {
         if (final_frame_complete)
         {
-            //if (show_color_animation_options)
+            bool stepped = false;
+
+            // Animation
+            if (animate_gradient_shift)
             {
-                // Animation
-                if (animate_gradient_shift)
+                if (fabs(gradient_shift_step) > 1.0e-4)
                 {
-                    if (fabs(gradient_shift_step) > 1.0e-4)
-                        gradient_shift = math::wrap(gradient_shift + gradient_shift_step * ani_mult, 0.0, 1.0);
-                }
-
-                if (animate_gradient_hue)
-                {
-                    if (fabs(hue_shift_step) > 1.0e-4)
-                        hue_shift = math::wrap(hue_shift + hue_shift_step * ani_mult, 0.0, 360.0);
-                }
-
-                if (animate_stripe_phase)
-                {
-                    if (fabs(phase_step) > 1.0e-4)
-                        stripe_params.phase = math::wrap(stripe_params.phase + phase_step * (f32)ani_mult, 0.0f, math::tau_f);
+                    gradient_shift = math::wrap(gradient_shift + gradient_shift_step * ani_mult, 0.0, 1.0);
+                    stepped = true;
                 }
             }
-            //else
-            //{
-            //    //if (Changed(gradient_shift, hue_shift, gradient_shift_step, hue_shift_step))
-            //    //    savefile_changed = true;
-            //}
+
+            if (animate_gradient_hue)
+            {
+                if (fabs(hue_shift_step) > 1.0e-4)
+                {
+                    hue_shift = math::wrap(hue_shift + hue_shift_step * ani_mult, 0.0, 360.0);
+                    stepped = true;
+                }
+            }
+
+            if (animate_stripe_phase)
+            {
+                if (fabs(phase_step) > 1.0e-4)
+                {
+                    stripe_params.phase = math::wrap(stripe_params.phase + phase_step * (f32)ani_mult, 0.0f, math::tau_f);
+                    stepped = true;
+                }
+            }
+
+            if (stepped)
+                requestRedraw(true);
         }
     }
 
     // cardioid animation
     if (!steady_zoom && show_interactive_cardioid && animate_cardioid_angle)
     {
-        ani_angle += ani_inc;
+        ani_angle += ani_inc * ani_mult;
         ani_angle = math::wrapRadians2PI(ani_angle);
     }
+
+    if (Changed(ani_angle))
+        requestRedraw(true);
 }
 
 bool Mandelbrot_Scene::updateGradient()
@@ -108,84 +114,65 @@ bool Mandelbrot_Scene::updateGradient()
     return false;
 }
 
-void Mandelbrot_Scene::updateCameraView()
+void Mandelbrot_Scene::updateCameraView(Viewport* ctx)
 {
-    #if MANDEL_FEATURE_FLATTEN_MODE
-    if (Changed(flatten))
+    #if MANDEL_FEATURE_CAMERA_EASING
+    if (!tweening)
     {
-        if (flatten) flatten_amount = 0.0;
-        camera->focusWorldRect(-2, -1, 2, 1);
-        camera.zoom = camera->relativeZoom<f128>().x;
-    }
-
-    if (Changed(flatten_amount))
-    {
-        using namespace Math;
-        double t = flatten_amount;
-        DRect r;
-
-        if (t < 0.5)      r = lerp(DRect(-2.0, -1.5, 0.5, 1.5), DRect(-2.0, -0.2, 1.5, 3.5), lerpFactor(t, 0.0, 0.5));
-        else if (t < 0.7) r = lerp(DRect(-2.0, -0.2, 1.5, 3.5), DRect(-1.5, -0.2, 4.0, 3.5), lerpFactor(t, 0.5, 0.7));
-        else              r = lerp(DRect(-1.5, -0.2, 4.0, 3.5), DRect(0.0, -1.5, 4.5, 0.5), lerpFactor(t, 0.7, 1.0));
-
-        camera->focusWorldRect(r, false);
-        camera.zoom = camera->relativeZoom<f128>().x;
-    }
-    #endif
-
-    if (!tweening) {
-
-        #if MANDEL_FEATURE_CAMERA_EASING
         // Process camera velocity
-        if (mouse->pressed)
+        if (mouse->buttonDown(MouseButton::LEFT))
         {
-            camera_vel_pos = DDVec2{};
+            cam_vel_pos = DDVec2{};
 
             // Stop zoom velocity on touch
-            camera_vel_zoom = 1.0;
+            cam_vel_zoom = 1.0;
         }
         else
         {
             f128 threshold = 0.001 / camera.relativeZoom<f128>();
-            if (camera_vel_pos.mag() > threshold)
-                camera.setPos(camera.pos<f128>() + camera_vel_pos);
+            if (cam_vel_pos.mag() > threshold)
+                camera.setPos(camera.pos<f128>() + cam_vel_pos);
             else
-                camera_vel_pos = DDVec2{};
+                cam_vel_pos = DDVec2{};
 
-            if (fabs(camera_vel_zoom - 1.0) > 0.01)
-                camera.setRelativeZoom(camera.relativeZoom<f128>() * camera_vel_zoom);
+            if (fabs(cam_vel_zoom - 1.0) > 0.01)
+                camera.setRelativeZoom(camera.relativeZoom<f128>() * cam_vel_zoom);
             else
-                camera_vel_zoom = 1.0;
+                cam_vel_zoom = 1.0;
 
-            camera_vel_pos *= 0.8 / fpsFactor();
-            camera_vel_zoom += (1.0 - camera_vel_zoom) * std::min(1.0, 0.2 * fpsFactor()); // Ease back to 1x
+            const f64 alpha = 0.85;
+            const f64 f = fpsFactor();
+
+            cam_vel_pos  *= std::pow(alpha, f);
+            cam_vel_zoom = 1.0 - (1.0 - cam_vel_zoom) * std::pow(alpha, f); // Ease back to 1x
         }
-        #endif
     }
+    #endif
+
+    // update surface size (snapped to lowest resolution) + world quad
+    int max_division = (int)phaseDownscaleFactor(0);
+    surface_w = (int)(ceil(ctx->width() / max_division)) * max_division;
+    surface_h = (int)(ceil(ctx->height() / max_division)) * max_division;
+    world_quad = camera.getTransform().toWorldQuad<f128>(DRect{ surface_w, surface_h });
 }
 
-void Mandelbrot_Scene::updateFieldSizes(Viewport* ctx)
+void Mandelbrot_Scene::updateFieldSizes()
 {
-    int iw = (int)(ceil(ctx->width() / 9)) * 9;
-    int ih = (int)(ceil(ctx->height() / 9)) * 9;
+    // set field/raster grid sizes + target render rect
+    int cur_division = (int)phaseDownscaleFactor(0);
+    for (int i = 0; i < PHASE_COUNT; i++)
+    {
+        int phase_w = surface_w / cur_division;
+        int phase_h = surface_h / cur_division;
 
-    // set field sizes
-    field_9x9.setDimensions(iw / 9, ih / 9);
-    field_3x3.setDimensions(iw / 3, ih / 3);
-    field_1x1.setDimensions(iw, ih);
+        phases[i].field.setDimensions(phase_w, phase_h);
+        phases[i].grid.setRasterSize(phase_w, phase_h);
+        phases[i].grid.setStageRect(0, 0, surface_w, surface_h);
 
-    // set bitmap sizes
-    bmp_9x9.setBitmapSize(iw / 9, ih / 9);
-    bmp_3x3.setBitmapSize(iw / 3, ih / 3);
-    bmp_1x1.setBitmapSize(iw, ih);
+        cur_division /= 3;
+    }
 
-    // determine world quad from viewport rect
-    bmp_9x9.setStageRect(0, 0, iw, ih);
-    bmp_3x3.setStageRect(0, 0, iw, ih);
-    bmp_1x1.setStageRect(0, 0, iw, ih);
-
-    world_quad = bmp_1x1.worldQuad();
-
+    // update normalization field shape
     bool changed_normalization_field_shape = false;
     if (first_frame || Changed(normalize_field_quality) || Changed(normalize_field_exponent))
     {
@@ -194,20 +181,15 @@ void Mandelbrot_Scene::updateFieldSizes(Viewport* ctx)
         changed_normalization_field_shape = true;
     }
 
+    // update normalization field sample points
     if (first_frame ||
-        changed_normalization_field_shape ||
         Changed(world_quad) ||
-        Changed(normalize_field_scale))
+        changed_normalization_field_shape ||
+        Changed(normalize_field_scale/*, normalize_field_precision*/)
+        )
     {
-        FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
         table_invoke(dispatch_table_targ(norm_field, NormalizationField::updateField, camera, normalize_field_scale), float_type);
     }
-
-    //if (Changed(world_quad))
-    //{
-    //    FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
-    //    table_invoke(dispatch_table_targ(norm_field_zoom_out, NormalizationField::updateField, camera, normalize_field_scale), float_type);
-    //}
 }
 
 void Mandelbrot_Scene::updateEnabledKernelFeatures()
@@ -215,224 +197,192 @@ void Mandelbrot_Scene::updateEnabledKernelFeatures()
     bool mandel_changed = mandelChanged();
 
     constexpr double eps = std::numeric_limits<double>::epsilon();
-    KernelFeatures old_smoothing = mandel_features;
-    KernelFeatures new_smoothing = KernelFeatures::NONE;
+    KernelFeatures old_features = mandel_features;
+    KernelFeatures new_features = KernelFeatures::NONE;
 
-    if (iter_weight > eps)   new_smoothing |= KernelFeatures::ITER;
-    if (dist_weight > eps)   new_smoothing |= KernelFeatures::DIST;
-    if (stripe_weight > eps) new_smoothing |= KernelFeatures::STRIPES;
+    if (iter_weight > eps)   new_features |= KernelFeatures::ITER;
+    if (dist_weight > eps)   new_features |= KernelFeatures::DIST;
+    if (stripe_weight > eps) new_features |= KernelFeatures::STRIPES;
 
-    bool force_upgrade       = (bool)( new_smoothing & ~old_smoothing);
-    bool downgrade_on_change = (bool)(~new_smoothing &  old_smoothing);
+    // upgrade immediately and recompute when a shader requires a new features (even if view doesn't change),
+    // but don't recompute when downgrading available features until it becomes necessary (e.g. a view change)
+    bool force_upgrade       = (bool)( new_features & ~old_features);
+    bool downgrade_on_change = (bool)(~new_features &  old_features);
 
     if (force_upgrade || (mandel_changed && downgrade_on_change))
-        mandel_features = new_smoothing;
+        mandel_features = new_features;
 }
 
-void Mandelbrot_Scene::updateActivePhaseAndField()
+void Mandelbrot_Scene::updateQuality()
 {
-    bool mandel_changed = mandelChanged();
+    bool view_changed = Changed(camera);
+    bool quality_opts_changed = Changed(quality, dynamic_iter_lim, tweening);
 
-    // ────── presented mandelbrot changed? restart at phase 0 ──────
-    if (mandel_changed)
+    if (first_frame || view_changed || quality_opts_changed)
     {
-        bmp_9x9.clear(0, 255, 0, 255);
-        bmp_3x3.clear(0, 255, 0, 255);
-        bmp_1x1.clear(0, 255, 0, 255);
-
-        // hide intro on first change
-        if (!first_frame) display_intro = false;
-
-        computing_phase = 0;
-        P.reset_progress_only();
-        final_frame_complete = false;
-
-        field_9x9.reset();
-        field_3x3.reset();
-        field_1x1.reset();
-
-        norm_field.clearFinalFlags();
-
-        compute_t0 = std::chrono::steady_clock::now();
-
-        timer_begin_group(ITER);
-        timer_begin_group(DIST);
-        timer_begin_group(STRIPE);
-        timer_begin_group(ESCAPE);
-        timer_begin_group(REBASE);
-        timer_begin_group(NORM_FIELD);
+        float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
+        iter_lim = finalIterLimit(camera, quality, dynamic_iter_lim, tweening);
     }
+}
 
-    // ────── set pending bitmap & pending field ──────
-    {
-        switch (computing_phase)
-        {
-        case 0:  pending_bmp = &bmp_9x9;  pending_field = &field_9x9;  /*pending_shaded = &shaded_9x9;*/ break;
-        case 1:  pending_bmp = &bmp_3x3;  pending_field = &field_3x3;  /*pending_shaded = &shaded_3x3;*/ break;
-        case 2:  pending_bmp = &bmp_1x1;  pending_field = &field_1x1;  /*pending_shaded = &shaded_1x1;*/ break;
-        }
-    }
+void Mandelbrot_Scene::resetCompute()
+{
+    // hide intro on first change
+    if (!first_frame) 
+        display_intro = false;
+
+    // reset phases
+    starting_phase = next_starting_phase;
+    computing_phase = starting_phase;
+
+    // reset forEachPixel progress tracker
+    P.reset_progress_only();
+    final_frame_complete = false;
+
+    //// reset fields
+    norm_field.clearFinalFlags();
+    for (MandelPhaseData& phase : phases)
+        phase.field.reset();
+
+    // reset timers
+    compute_timer.begin();
+    for (int phase = 0; phase < PHASE_COUNT; phase++)
+        phase_timers[phase] = 0;
 }
 
 bool Mandelbrot_Scene::processCompute()
 {
-    bool finished_compute = false;
-
-    iter_lim = finalIterLimit(camera, quality, dynamic_iter_lim, tweening);
-
-    FloatingPointType float_type = getRequiredFloatType(mandel_features, camera.relativeZoom<f128>());
+    bool finished_compute = false; // todo: rename to phase_complete?
 
     // Calculate first low-res phase in one-shot (no timeout)
     // For high-res phases, break up work across multiple frames if necessary to not lock panning
-    int timeout = 0;
-    if (!steady_zoom && computing_phase > 0) 
+    int timeout = updateComputeTimeout();
+
+    // Run appropriate kernel for given settings
+    deduced_kernel_mode = kernel_mode;
+
+    // if "AUTO" => use perturbation at f128 depths
+    // otherwise no performance gain => use simple kernel
+    if (deduced_kernel_mode == KernelMode::AUTO)
     {
-        switch (float_type) {
-            case FloatingPointType::F64:  timeout = 128; break;
-            case FloatingPointType::F128: timeout = 256; break;
-            default: timeout = 0;
-        }
+        // todo: Make sure we don't switch mode inbetween phases? Some kernels might rely on cached info
+        //       from the same kernel 
+        if (float_type >= FloatingPointType::F128)
+            deduced_kernel_mode = KernelMode::PERTURBATION_SIMD_UNROLLED;
+        else
+            deduced_kernel_mode = KernelMode::NO_PERTURBATION;
     }
 
-    //if (!flatten)
+    // resume computing this phase
     {
-        //DQuad quad = ctx->worldQuad();
-        //bool x_axis_visible = quad.intersects({ {quad.minX(), 0}, {quad.maxX(), 0} });
-
-        // Run appropriate kernel for given settings
-        KernelMode deduced_kernel_mode = kernel_mode;
-
-        // if "AUTO" => use perturbation at f128 depths
-        // otherwise no performance gain => use simple kernel
-        if (deduced_kernel_mode == KernelMode::AUTO)
-            deduced_kernel_mode = (float_type >= FloatingPointType::F128) ? KernelMode::PERTURBATION_SIMD_UNROLLED : KernelMode::NO_PERTURBATION;
+        double elapsed = 0.0;
 
         finished_compute = frame_complete = 
-            table_invoke(dispatch_table(compute_mandelbrot, timeout), float_type, mandel_features, deduced_kernel_mode);
+            table_invoke(dispatch_table(compute_mandelbrot, timeout, elapsed), float_type, mandel_features, deduced_kernel_mode);
 
-
-        //finished_compute = frame_complete = table_invoke(
-        //    build_table(mandelbrot_perturbation, [&], pending_bmp, pending_field, active_field, norm_field, normalize_field_precision, iter_lim, timeout, P, stripe_params),
-        //    float_type, mandel_features, deduced_kernel_mode
-        //);
+        phase_timers[computing_phase] += elapsed;
     }
-    //else
-    //{
-    //    // Flat lerp
-    //    finished_compute = dispatchBooleans(
-    //        boolsTemplate(radialMandelbrot, [&]),
-    //        mandel_features != MandelSmoothing::NONE,
-    //        show_period2_bulb
-    //    );
-    //}
 
     if (finished_compute)
     {
-        // Finished computing pending_field, set as active field and use for future color updates
-        active_bmp = pending_bmp;
-        active_field = pending_field;
-        //active_shaded = pending_shaded;
+        if (computing_phase > starting_phase)
+        {
+            auto& src_sma = phase_elapsed_mult_sma_list[computing_phase];
+            f64 mult = phase_timers[computing_phase] / phase_timers[computing_phase - 1];
 
+            phase_elapsed_mult_results[computing_phase] = src_sma.push(mult);
+            phase_elapsed_mult_sma_result = phase_elapsed_mult_sma.push(mult);
+        }
+
+        if (computing_phase == starting_phase)
+        {
+            phase_elapsted_estimated_final = predictFinalPhaseDuration(computing_phase, phase_timers[computing_phase], phase_elapsed_mult_results);
+            if (starting_phase == 0)
+            {
+                if (phase_elapsted_estimated_final < 1500)
+                    next_starting_phase = 1;
+            }
+            else
+            {
+                if (phase_elapsted_estimated_final > 1750)
+                    next_starting_phase = 0;
+            }
+        }
+
+        // Finished computing pending_field, set as active field and use for future color updates
         active_phase = computing_phase;
 
         // ======== Result forwarding ========
-        switch (computing_phase) {
-            case 0:
+        if (interior_forwarding != (int)MandelInteriorForwarding::SLOWEST)
+        {
+            int next_phase = computing_phase + 1;
+            WorldRasterGrid128& src_grid = phases[computing_phase].grid;
+            EscapeField& src_field = phases[computing_phase].field;
+            EscapeField& dst_field = phases[next_phase].field;
+
+            if (computing_phase < PHASE_COUNT - 1)
             {
-                /// finished first 9x9 low-res phase, forward computed pixels to 3x3 phase
+                ContractExpandPhase& contact_expand_phase = contract_expand_phases[computing_phase];
                 int interior_c = 0;
-                bmp_9x9.forEachPixel([&](int x, int y)
+
+                src_grid.forEachPixel([&](int x, int y)
                 {
-                    field_3x3(x*3+1, y*3+1) = field_9x9(x, y);
-                
+                    dst_field(x * 3 + 1, y * 3 + 1) = src_field(x, y);
+
                     // Interior skipping optimization
-                    if (!field_9x9.has_valid_depth(x, y))
-                    {
-                        field_9x9.set_skip_flag(x, y, 1);
+                    if (!src_field.has_valid_depth(x, y)) {
+                        src_field.set_skip_flag(x, y, 1);
                         interior_c++;
                     }
                 });
-                int min_c = interior_phases_contract_expand.c1 * interior_phases_contract_expand.c1;
+
+                // Only apply optimization if there's a significant amount of interior that can be forwarded
+                int min_c = contact_expand_phase.contract * contact_expand_phase.contract;
                 if (interior_c > min_c)
                 {
-                    field_9x9.contractSkipFlags(interior_phases_contract_expand.c1);
-                    field_9x9.expandSkipFlags(interior_phases_contract_expand.e1);
-                    bmp_9x9.forEachPixel([this](int x, int y)
-                    {
-                        if (field_9x9.get_skip_flag(x, y))
-                        {
-                            int x0 = x * 3, y0 = y * 3;
-                            for (int py = y0; py <= y0 + 3; py++)
-                                for (int px = x0; px <= x0 + 3; px++)
-                                    field_3x3.set_skip_flag(px, py, 1);
-                        }
-                    });
-                }
-            }
-            break;
+                    src_field.contractSkipFlags(contact_expand_phase.contract);
+                    src_field.expandSkipFlags(contact_expand_phase.expand);
 
-            case 1:
-            {
-                /// finished second 3x3 low-res phase, forward computed pixels to final 1x1 phase
-                int interior_c = 0;
-
-                bmp_3x3.forEachPixel([&](int x, int y)
-                {
-                    field_1x1(x*3+1, y*3+1) = field_3x3(x, y);
-                
-                    // Interior skipping optimization
-                    if (!field_3x3.has_valid_depth(x, y))
+                    bool final_forward = (computing_phase == PHASE_COUNT - 2);
+                    table_invoke(lambda_table([&]<bool Final_Step>()
                     {
-                        field_3x3.set_skip_flag(x, y, 1);
-                        interior_c++;
-                    }
-                });
-                
-                int min_c = interior_phases_contract_expand.c2 * interior_phases_contract_expand.c1;
-                if (interior_c > min_c)
-                {
-                    field_3x3.contractSkipFlags(interior_phases_contract_expand.c2);
-                    field_3x3.expandSkipFlags(interior_phases_contract_expand.e2);
-                    bmp_3x3.forEachPixel([this](int x, int y)
-                    {
-                        if (field_3x3.get_skip_flag(x, y))
+                        src_grid.forEachPixel([&](int x, int y)
                         {
-                            int x0 = x * 3, y0 = y * 3;
-                            for (int py = y0; py <= y0 + 3; py++)
-                            {
-                                for (int px = x0; px <= x0 + 3; px++)
-                                {
-                                    EscapeFieldPixel& pixel = field_1x1(px, py);
-                                    pixel.depth = INSIDE_MANDELBROT_SET_SKIPPED;
-                                    field_1x1.set_skip_flag(px, py, 1);
+                            if (!src_field.get_skip_flag(x, y)) return;
+
+                            int x0 = x * 3;
+                            int y0 = y * 3;
+                            for (int py = y0; py <= y0 + 3; py++) {
+                                for (int px = x0; px <= x0 + 3; px++) {
+                                    EscapeFieldPixel& pixel = dst_field(px, py);
+                                    if constexpr (Final_Step)
+                                        pixel.depth = INSIDE_MANDELBROT_SET_SKIPPED;
+                                    dst_field.set_skip_flag(px, py, 1);
                                 }
                             }
-                        }
-                    });
-                }
+                        });
+                    }), final_forward);
+                };
             }
-            break;
-
-            case 2:
-                /// finished final 1x1 phase
-                final_frame_complete = true;
-
-                //timer_end_group(ITER);
-                //timer_end_group(DIST);
-                //timer_end_group(STRIPE);
-                //timer_end_group(ESCAPE);
-                //timer_end_group(REBASE);
-                //timer_end_group(NORM_FIELD);
-                //blPrint("\n");
-
-                auto elapsed = std::chrono::steady_clock::now() - compute_t0;
-                double dt = std::chrono::duration<double, std::milli>(elapsed).count();
-                dt_avg = timer_ma.push(dt);
-                break;
         }
 
-        if (computing_phase < 2)
+        if (computing_phase >= PHASE_COUNT - 1)
+        {
+            // finished final phase
+            final_frame_complete = true;
+            dt_last = compute_timer.elapsed();
+        }
+        else
+        {
+            // more phases to go
             computing_phase++;
+            requestImmediateUpdate();
+        }
+    }
+    else
+    {
+        if (!P.finished())
+            requestImmediateUpdate();
     }
 
     return finished_compute;
@@ -442,8 +392,13 @@ void Mandelbrot_Scene::processCapturing(bool finished_compute, bool reshade)
 {
     if (final_frame_complete)
     {
-        // just finished computing final 1x1 phase? Always permit capture of this frame
+        // just finished computing final phase? Always permit capture of this frame
         if (finished_compute)
+            permitCaptureFrame(true);
+
+        // did we *begin* capture on final phase without needing to recompute? 
+        // Previous finished_compute condition won't trigger
+        if (capturedFrameCount() == 0)
             permitCaptureFrame(true);
 
         if (!steady_zoom)
@@ -462,12 +417,10 @@ void Mandelbrot_Scene::processCapturing(bool finished_compute, bool reshade)
     }
 }
 
-
-
 bool Mandelbrot_Scene::mandelChanged()
 {
     bool view_changed            = Changed(world_quad);
-    bool quality_opts_changed    = Changed(quality, dynamic_iter_lim, interior_forwarding, maxdepth_show_optimized);
+    bool quality_opts_changed    = Changed(iter_lim, dynamic_iter_lim, interior_forwarding, maxdepth_show_optimized);
     bool compute_opts_changed    = Changed(stripe_params.freq);
     bool features_changed        = Changed(mandel_features);
     bool normalize_field_changed = Changed(normalize_field_quality, normalize_field_exponent, normalize_field_scale, normalize_field_precision);
@@ -490,14 +443,12 @@ bool Mandelbrot_Scene::mandelChanged()
 bool Mandelbrot_Scene::normalizationOptionsChanged()
 {
     bool weights_changed            = Changed(iter_weight, dist_weight, stripe_weight);
-    bool shade_formula_changed      = Changed(iter_x_dist_weight,       dist_x_stripe_weight,     stripe_x_iter_weight,
-                                              iter_x_distStripe_weight, dist_x_iterStripe_weight, stripe_x_iterDist_weight);
-
     bool cycle_iter_opts_changed    = Changed(iter_params);
     bool cycle_dist_opts_changed    = Changed(dist_params, dist_tone_params);
     bool cycle_stripe_opts_changed  = Changed(stripe_params.phase, stripe_tone_params);
+    bool norm_field_changed         = Changed(normalize_field_scale, normalize_field_quality, normalize_field_exponent, normalize_field_precision);
 
-    return (shade_formula_changed || weights_changed || cycle_iter_opts_changed || cycle_dist_opts_changed || cycle_stripe_opts_changed);
+    return (weights_changed || cycle_iter_opts_changed || cycle_dist_opts_changed || cycle_stripe_opts_changed || norm_field_changed);
 }
 
 

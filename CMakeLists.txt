@@ -6,25 +6,29 @@ if (NOT TARGET bitloop::bitloop)
   find_package(bitloop CONFIG REQUIRED)
 endif()
 
-# ----- configure project hierarchy (discovery) -----
+# ---------------------------------  flags  ----------------------------------
 
-# Gather source files for this project
-file(GLOB SIM_SOURCES CONFIGURE_DEPENDS
-	"Mandelbrot/external/*.cpp"
-	"Mandelbrot/*.cpp"
-	"Mandelbrot/*.hpp"
-	"Mandelbrot/*.h"
+# if this Cmake project open as root, BITLOOP_DEV_MODE overrides child projects,
+# otherwise it inherits parent project value.
+
+# set(BITLOOP_DEV_MODE TRUE)
+
+
+# ------------------  configure project hierarchy/sources  -------------------
+
+set(SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/Mandelbrot")
+file(GLOB_RECURSE SIM_SOURCES CONFIGURE_DEPENDS 
+	"${SRC_DIR}/*.cpp" 
+	"${SRC_DIR}/*.h" 
+	"${SRC_DIR}/*.hpp"
 )
 
-# flags (applied only if project open as root)
-#set(BITLOOP_DEV_MODE TRUE)
-
-bitloop_new_project(Mandelbrot  ${SIM_SOURCES})
+bitloop_new_project(Mandelbrot ${SIM_SOURCES})
 bitloop_add_dependency(Mandelbrot  "subprojects/Cardioid")
 bitloop_hide(Cardioid)
 bitloop_finalize()
 
-# ----- configure project packages/compile/link options -----
+# ---------  configure your target (compile options, packages, etc)  ---------
 
 #find_package(zfp CONFIG REQUIRED)
 #target_link_libraries(Mandelbrot PRIVATE zfp::zfp)
@@ -44,3 +48,4 @@ else()
 	target_compile_options(Mandelbrot PRIVATE -O3 -flto -msimd128 -mrelaxed-simd -ffast-math -ffp-contract=fast -fno-math-errno)
 	target_link_options(Mandelbrot PRIVATE -O3 -flto)
 endif()
+

@@ -42,6 +42,62 @@ const compression::BrotliDict* MandelState::getDictionary(int v)
     }
 }
 
+MandelState MandelState::getDefaults(int version)
+{
+    MandelState s;
+
+    if (version == 0)
+    {
+        s.interior_forwarding = (int)MandelInteriorForwarding::MEDIUM;
+
+        s.iter_weight = 1.0;
+        s.dist_weight = 0.0;
+        s.stripe_weight = 0.0;
+
+        s.shader_source_txt =
+            "// @pass base\n"
+            "return sampleGradient(wrap01(iter + dist + stripe));\n";
+
+        s.iter_params.iter_dynamic_limit = false;
+        s.iter_params.iter_normalize_depth = false;
+        s.iter_params.iter_log1p_weight = false;
+        s.iter_params.iter_cycle_value = 1.0f;
+
+        s.dist_params.dist_invert = false;
+        s.dist_params.dist_cycle_value = 0.25;
+        s.dist_params.cycle_dist_sharpness = 0.9;
+
+        s.stripe_params.freq = 3;
+        s.stripe_params.phase = 0.0;
+
+        s.dist_tone_params.brightness = 0.0f;
+        s.dist_tone_params.gamma = 1.0f;
+
+        s.stripe_tone_params.brightness = 0.0f;
+        s.stripe_tone_params.contrast = 1.0f;
+        s.stripe_tone_params.gamma = 1.0f;
+
+        s.gradient_shift = 0.0;
+        s.hue_shift = 0.0;
+
+        s.gradient_shift_step = 0.0078;
+        s.hue_shift_step = 0.136;
+        s.phase_step = math::toRadians(1.0f);
+
+        generateGradientFromPreset(s.gradient, GradientPreset::CLASSIC);
+        s.animate_gradient_shift = false;
+        s.animate_gradient_hue = false;
+        s.animate_stripe_phase = false;
+
+        s.normalize_field_scale = 2.0;
+        s.normalize_field_quality = 0.1;
+        s.normalize_field_exponent = 1.0;
+        s.normalize_field_precision = 0.0;
+    }
+
+    return s;
+}
+
 std::string MandelState::serialize() const
 {
     constexpr bool COMPRESS_CONFIG = true;
@@ -55,13 +111,13 @@ std::string MandelState::serialize() const
     // Increment version each time the format changes
     u32 flags = 0;
 
-    if (dynamic_iter_lim)                       flags |= MANDEL_DYNAMIC_ITERS;
-    if (show_axis)                              flags |= MANDEL_SHOW_AXIS;
-    if (flatten)                                flags |= MANDEL_FLATTEN;
-    if (iter_params.cycle_iter_dynamic_limit)   flags |= MANDEL_DYNAMIC_COLOR_CYCLE;
-    if (iter_params.cycle_iter_normalize_depth) flags |= MANDEL_NORMALIZE_DEPTH;
-    if (dist_params.cycle_dist_invert)          flags |= MANDEL_INVERT_DIST;
-    if (use_smoothing)                          flags |= MANDEL_USE_SMOOTHING;
+    if (dynamic_iter_lim)                  flags |= MANDEL_DYNAMIC_ITERS;
+    if (show_axis)                         flags |= MANDEL_SHOW_AXIS;
+    if (flatten)                           flags |= MANDEL_FLATTEN;
+    if (iter_params.iter_dynamic_limit)    flags |= MANDEL_DYNAMIC_COLOR_CYCLE;
+    if (iter_params.iter_normalize_depth)  flags |= MANDEL_NORMALIZE_DEPTH;
+    if (dist_params.dist_invert)           flags |= MANDEL_INVERT_DIST;
+    if (use_smoothing)                     flags |= MANDEL_USE_SMOOTHING;
     flags |= (version << MANDEL_VERSION_BITSHIFT);
 
     JSON::json info;
@@ -90,9 +146,9 @@ std::string MandelState::serialize() const
         // Color cycle
         {
             /// --- weights ---
-            if (iter_weight != defaults.iter_weight)     info["m"] = JSON::markCleanFloat(iter_weight, 2);
-            if (dist_weight != defaults.dist_weight)     info["n"] = JSON::markCleanFloat(dist_weight, 2);
-            if (stripe_weight != defaults.stripe_weight) info["o"] = JSON::markCleanFloat(stripe_weight, 2);
+            if (iter_weight != defaults.iter_weight)     info["m"] = JSON::markCleanFloat(iter_weight, 3);
+            if (dist_weight != defaults.dist_weight)     info["n"] = JSON::markCleanFloat(dist_weight, 3);
+            if (stripe_weight != defaults.stripe_weight) info["o"] = JSON::markCleanFloat(stripe_weight, 3);
 
             ///if (iter_x_dist_weight       != defaults.iter_x_dist_weight)       info["C"] = JSON::markCleanFloat(iter_x_dist_weight, 3);
             ///if (dist_x_stripe_weight     != defaults.dist_x_stripe_weight)     info["D"] = JSON::markCleanFloat(dist_x_stripe_weight, 3);
@@ -107,12 +163,12 @@ std::string MandelState::serialize() const
             /// --- features ---
 
             // ITER
-            if (iter_params.cycle_iter_value        != defaults.iter_params.cycle_iter_value)        info["i"] = JSON::markCleanFloat(iter_params.cycle_iter_value);
-            if (iter_params.cycle_iter_log1p_weight != defaults.iter_params.cycle_iter_log1p_weight) info["l"] = JSON::markCleanFloat(iter_params.cycle_iter_log1p_weight);
+            if (iter_params.iter_cycle_value        != defaults.iter_params.iter_cycle_value)        info["i"] = JSON::markCleanFloat(iter_params.iter_cycle_value);
+            if (iter_params.iter_log1p_weight != defaults.iter_params.iter_log1p_weight) info["l"] = JSON::markCleanFloat(iter_params.iter_log1p_weight);
 
             // DIST
-            if (dist_params.cycle_dist_value        != defaults.dist_params.cycle_dist_value)        info["d"] = JSON::markCleanFloat(dist_params.cycle_dist_value, 5);
-            if (dist_params.cycle_dist_sharpness    != defaults.dist_params.cycle_dist_sharpness)    info["s"] = JSON::markCleanFloat(dist_params.cycle_dist_sharpness, 5);
+            if (dist_params.dist_cycle_value        != defaults.dist_params.dist_cycle_value)        info["d"] = JSON::markCleanFloat(dist_params.dist_cycle_value, 5);
+            if (dist_params.cycle_dist_sharpness    != defaults.dist_params.cycle_dist_sharpness)    info["s"] = JSON::markCleanFloat(dist_params.cycle_dist_sharpness, 6);
 
             // STRIPE
             if (stripe_params.freq                  != defaults.stripe_params.freq)                  info["v"] = stripe_params.freq;
@@ -169,11 +225,6 @@ std::string MandelState::serialize() const
         if (concatenated_filters_b64 != "")
             info["R"] = concatenated_filters_b64;
     }
-    else if (version >= 1)
-    {
-        //info["A"] = x_spline.serialize(SplineSerializationMode::COMPRESS_SHORTEST);
-        //info["B"] = y_spline.serialize(SplineSerializationMode::COMPRESS_SHORTEST);
-    }
 
     /// Generate JSON with entries containing "CLEANFLOAT(...)" strings, then strip it away leaving just the raw floats
     /// Guaranteed to contain no rounding errors
@@ -227,7 +278,7 @@ bool MandelState::_deserialize(std::string_view sv, bool COMPRESS_CONFIG)
     //blPrint() << "uncleaned: " << uncompressed;
     uncompressed = JSON::json_add_key_quotes(uncompressed);
     uncompressed = JSON::json_add_leading_zeros(uncompressed);
-    //blPrint() << "decoded: " << uncompressed;
+    blPrint() << "decoded: " << uncompressed;
 
     nlohmann::json info = nlohmann::json::parse(uncompressed, nullptr, false);
     if (info.is_discarded())
@@ -243,13 +294,13 @@ bool MandelState::_deserialize(std::string_view sv, bool COMPRESS_CONFIG)
     {
         //mandel_features = ((flags & MANDEL_SMOOTH_MASK) >> MANDEL_SMOOTH_BITSHIFT);
 
-        dynamic_iter_lim                       = flags & MANDEL_DYNAMIC_ITERS;
-        show_axis                              = flags & MANDEL_SHOW_AXIS;
-        flatten                                = flags & MANDEL_FLATTEN;
-        iter_params.cycle_iter_dynamic_limit   = flags & MANDEL_DYNAMIC_COLOR_CYCLE;
-        iter_params.cycle_iter_normalize_depth = flags & MANDEL_NORMALIZE_DEPTH;
-        dist_params.cycle_dist_invert          = flags & MANDEL_INVERT_DIST;
-        use_smoothing                          = flags & MANDEL_USE_SMOOTHING;
+        dynamic_iter_lim                  = flags & MANDEL_DYNAMIC_ITERS;
+        show_axis                         = flags & MANDEL_SHOW_AXIS;
+        flatten                           = flags & MANDEL_FLATTEN;
+        iter_params.iter_dynamic_limit    = flags & MANDEL_DYNAMIC_COLOR_CYCLE;
+        iter_params.iter_normalize_depth  = flags & MANDEL_NORMALIZE_DEPTH;
+        dist_params.dist_invert           = flags & MANDEL_INVERT_DIST;
+        use_smoothing                     = flags & MANDEL_USE_SMOOTHING;
 
         // View
         if (info.contains("x") && info.find("x").value().is_string())
@@ -274,6 +325,8 @@ bool MandelState::_deserialize(std::string_view sv, bool COMPRESS_CONFIG)
         // Quality
         quality = info.value("q", quality);
 
+        interior_forwarding = info.value("Q", defaults.interior_forwarding);
+
         // Color cycle
         {
             // Mix ratio (v0 - recover new weights from old format)
@@ -291,22 +344,15 @@ bool MandelState::_deserialize(std::string_view sv, bool COMPRESS_CONFIG)
                 stripe_weight = info.value("o", defaults.stripe_weight);
             }
 
-            iter_x_dist_weight       = info.value("C", defaults.iter_x_dist_weight);
-            dist_x_stripe_weight     = info.value("D", defaults.dist_x_stripe_weight);
-            stripe_x_iter_weight     = info.value("F", defaults.stripe_x_iter_weight);
-            iter_x_distStripe_weight = info.value("I", defaults.iter_x_distStripe_weight);
-            dist_x_iterStripe_weight = info.value("J", defaults.dist_x_iterStripe_weight);
-            stripe_x_iterDist_weight = info.value("L", defaults.stripe_x_iterDist_weight);
-
             // shader
             shader_source_txt = info.value("S", defaults.shader_source_txt);
 
             // ITER
-            iter_params.cycle_iter_value        = info.value("i", defaults.iter_params.cycle_iter_value);
-            iter_params.cycle_iter_log1p_weight = info.value("l", defaults.iter_params.cycle_iter_log1p_weight);
+            iter_params.iter_cycle_value        = info.value("i", defaults.iter_params.iter_cycle_value);
+            iter_params.iter_log1p_weight = info.value("l", defaults.iter_params.iter_log1p_weight);
 
             // DIST
-            dist_params.cycle_dist_value     = info.value("d", defaults.dist_params.cycle_dist_value);
+            dist_params.dist_cycle_value     = info.value("d", defaults.dist_params.dist_cycle_value);
             dist_params.cycle_dist_sharpness = info.value("s", defaults.dist_params.cycle_dist_sharpness);
 
             // STRIPE
@@ -369,15 +415,9 @@ bool MandelState::_deserialize(std::string_view sv, bool COMPRESS_CONFIG)
 
         for (const auto& alias : aliases)
         {
-            SnapshotPreset* preset = all_presets.findByAlias(alias);
+            CapturePreset* preset = all_presets.findByAlias(alias);
             if (preset) valid_presets[preset->hashedAlias()] = false;
         }
-    }
-
-    if (version >= 1)
-    {
-        //if (info.contains("A")) x_spline.deserialize(info["A"].get<std::string>());
-        //if (info.contains("B")) y_spline.deserialize(info["B"].get<std::string>());
     }
 
     return true;

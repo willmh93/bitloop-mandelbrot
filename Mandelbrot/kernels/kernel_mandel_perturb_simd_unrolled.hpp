@@ -5,7 +5,7 @@
 SIM_BEG;
 
 // Perturbation (SIMD, unrolled)
-template<class T_lo, class T_hi, KernelFeatures F>
+template<class T_lo, KernelFeatures F>
 FORCE_INLINE bool mandel_kernel_perturb_simd_unrolled(
     const RefOrbitLo<T_lo>& ref,
     T_lo dcx, T_lo dcy, int iter_lim,
@@ -16,6 +16,7 @@ FORCE_INLINE bool mandel_kernel_perturb_simd_unrolled(
     constexpr bool NEED_DIST    = (bool)(F & KernelFeatures::DIST);
     constexpr bool NEED_STRIPES = (bool)(F & KernelFeatures::STRIPES);
     constexpr T_lo ER2 = T_lo(escape_radius2<F>());
+    constexpr T_lo MIN_FLT = (T_lo)1.17549e-38;
     const int max_ref = std::max(0, ref.max_ref);
 
     int ref_i = 0, n = 0;
@@ -53,27 +54,26 @@ FORCE_INLINE bool mandel_kernel_perturb_simd_unrolled(
             const T_lo zax = v_zn1.x(), zay = v_zn1.y();                                                \
                                                                                                         \
             if constexpr (NEED_STRIPES) {                                                               \
-                float invr = 1.0f / std::sqrt((f32)r2);                                                 \
-                float c = (float)zax * invr;                                                            \
-                float s = (float)zay * invr;                                                            \
+                f32 invr = 1.0f / std::sqrt((f32)r2); /* sqrt f32 faster? */                            \
+                f32 c = (f32)zax * invr;                                                                \
+                f32 s = (f32)zay * invr;                                                                \
                 stripe.accumulate(c, s);                                                                \
             }                                                                                           \
             if (r2 > ER2) {                                                                             \
-                const f64 r2d = (f64)r2;                                                                \
-                const f64 log_abs_z = 0.5 * std::log(std::max(r2d, 1e-300));                            \
-                const f64 nu = f64(n + 1) + 1.0 - std::log2(std::max(log_abs_z, 1e-300));               \
-                depth = nu - smooth_depth_offset<F>();                                                  \
+                const T_lo log_abs_z = T_lo(0.5) * std::log(std::max(r2, MIN_FLT));                     \
+                const T_lo nu = T_lo(n + 2) - std::log2(std::max(log_abs_z, MIN_FLT));                  \
+                depth = (f64)(nu - smooth_depth_offset_d<F>());                                         \
                 if (depth < 0) depth = 0;                                                               \
                                                                                                         \
                 if constexpr (NEED_DIST) {                                                              \
-                    const T_lo r = T_lo(std::sqrt((f64)r2));                                            \
-                    const T_lo dzabs = T_lo(std::hypot((f64)ddx, (f64)ddy));                            \
-                    dist = (dzabs == 0) ? 0 : (r * std::log(r) / dzabs);                                \
+                    const T_lo r = std::sqrt(r2);                                                       \
+                    const T_lo dzabs = T_lo(std::hypot(ddx, ddy));                                      \
+                    dist = (f64)((dzabs == 0) ? 0 : (r * std::log(r) / dzabs));                         \
                 }                                                                                       \
                 else dist = 0;                                                                          \
                                                                                                         \
                 if constexpr (NEED_STRIPES)                                                             \
-                    stripe.escape(r2d);                                                                 \
+                    stripe.escape(r2);                                                                  \
                                                                                                         \
                 return true;                                                                            \
             }                                                                                           \
@@ -114,7 +114,7 @@ FORCE_INLINE bool mandel_kernel_perturb_simd_unrolled(
     // Did not escape
     depth = INSIDE_MANDELBROT_SET;
     if constexpr (NEED_DIST)    dist = T_lo(-1);
-    if constexpr (NEED_STRIPES) stripe.escape(0.0);
+    if constexpr (NEED_STRIPES) stripe.no_escape();
     return true;
 }
 

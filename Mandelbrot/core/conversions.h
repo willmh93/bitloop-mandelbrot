@@ -1,5 +1,6 @@
 #pragma once
 #include <bitloop.h>
+#include "types.h"
 
 SIM_BEG;
 
@@ -9,10 +10,33 @@ template<KernelFeatures F> constexpr f64 escape_radius() { return ((bool)(F & Ke
 template<KernelFeatures F> constexpr f64 escape_radius2() { return bl::pow(escape_radius<F>(), 2.0); }
 template<KernelFeatures F> constexpr f64 log_escape_radius2() { return bl::log(escape_radius2<F>()); }
 template<KernelFeatures F> constexpr f32 smooth_depth_offset() { return (f32)bl::log2(bl::log2(escape_radius2<F>())) - 1.0f; }
+template<KernelFeatures F> constexpr f64 smooth_depth_offset_d() { return bl::log2(bl::log2(escape_radius2<F>())) - 1.0; }
 
 // baselines
 constexpr f128 Z0 = 1; // base zoom
 constexpr f128 H0 = 1; // base height
+
+inline f64 predictFinalPhaseDuration(int phase_index, f64 phase_duration, std::array<f64, PHASE_COUNT>& phase_elapsed_mult_results)
+{
+    if (phase_index == PHASE_COUNT - 1)
+        return phase_duration;
+
+    double final_duration = phase_duration;
+
+    for (int i = phase_index; i < PHASE_COUNT - 1; i++)
+        final_duration *= phase_elapsed_mult_results[i+1];
+
+    return final_duration;
+}
+
+constexpr double phaseDownscaleFactor(int phase [[maybe_unused]] )
+{
+    // e.g.
+    //  if (PHASE_COUNT==4) and (phase==0) [first]:  (4 - 0 - 1) = exponent 3, bl::pow(3, 3) == 27x
+    //  if (PHASE_COUNT==4) and (phase==3) [last]:   (4 - 3 - 1) = exponent 0, bl::pow(3, 0) == 1x
+    //return bl::pow(3, 2); 
+    return bl::pow(3, PHASE_COUNT - phase - 1); 
+}
 
 // normalized zoom (begins at 1, increases as you zoom)
 inline f128 toNormalizedZoom(f128 zoom) { return f128(1) + log10(zoom / Z0); }
@@ -23,7 +47,7 @@ inline f128 toHeight(f128 zoom)  { return H0 - log10(zoom / Z0); }
 inline f128 fromHeight(f128 h)   { return Z0 * pow(f128(10), H0 - h); }
 
 // "base" iter limit
-inline int mandelbrotIterLimit(f128 zoom)                   { return (int)(std::max((f128)1, log10(zoom)) * (f128)2000.0); }
+inline int mandelbrotIterLimit(f128 zoom)                   { return (int)(std::max((f128)1, log10(zoom)) * (f128)1000.0); }
 inline double qualityFromIterLimit(int iter_lim, f128 zoom) { return (f64)(iter_lim) / mandelbrotIterLimit(zoom); }
 
 // iter limit used (if dynamic, quality=ratio, otherwise raw iter limit). force dynamic during tween

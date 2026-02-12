@@ -1,8 +1,8 @@
 #pragma once
 #include <bitloop.h>
 
-#include "build_config.h"
-#include "mandel_field.h"
+#include "../config/build_config.h"
+#include "../field/escape_field.h"
 
 SIM_BEG;
 
@@ -24,10 +24,21 @@ struct MandelStats
 
     struct FieldInfo
     {
-        f64 min_depth,     max_depth;                      // true min/max field depth
-        f64 min_log_depth, max_log_depth;                  // lerped log of true min/max depth
-        f64 assumed_min_depth, assumed_max_depth;          // for current zoom, rough "estimated" min/max depth
-        f64 assumed_log_min_depth, assumed_log_max_depth;  // for current zoom, lerped log of rough "estimated" min/max depth
+        // raw min/max depth (computed directly from field)
+        f64 raw_min_depth = 0;
+        f64 raw_max_depth = 0;
+        f64 raw_min_dist = 0;
+        f64 raw_max_dist = 0;
+        f32 raw_min_stripe = 0;
+        f32 raw_max_stripe = 0;
+
+        // final min/max values after normalization/toning/cycling
+        f32 final_min_depth = 0;
+        f32 final_max_depth = 0;
+        f32 final_min_dist = 0;
+        f32 final_max_dist = 0;
+        f32 final_min_stripe = 0;
+        f32 final_max_stripe = 0;
         
         #if MANDEL_EXTENDED_FIELD_STATS
         ExtendedFieldStats extended;

@@ -3,7 +3,7 @@
 #include <fstream>
 #include <tsl/ordered_map.h>
 
-#include "build_config.h"
+#include "../config/build_config.h"
 
 SIM_BEG;
 

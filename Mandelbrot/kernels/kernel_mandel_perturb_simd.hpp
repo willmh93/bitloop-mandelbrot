@@ -7,7 +7,7 @@ SIM_BEG;
 // Perturbation (SIMD) - Not actively used, but kept for debugging/experimenting/timing
 // since it's easier to work with than unrolled version (which is actively used)
 
-template<class T_lo, class T_hi, KernelFeatures F>
+template<class T_lo, KernelFeatures F>
 FORCE_INLINE bool mandel_kernel_perturb_simd(
     const RefOrbitLo<T_lo>& ref,
     T_lo dcx, T_lo dcy,
@@ -133,7 +133,7 @@ FORCE_INLINE bool mandel_kernel_perturb_simd(
 
             // STRIPE
             if constexpr (NEED_STRIPES)
-                stripe.escape((f64)r2);
+                stripe.escape((f32)r2);
             ///timer_t1(ESCAPE);
 
             //timer_t1(NORM_FIELD)
@@ -200,7 +200,7 @@ FORCE_INLINE bool mandel_kernel_perturb_simd(
     depth = INSIDE_MANDELBROT_SET;
 
     if constexpr (NEED_DIST) dist = T_lo(-1);
-    if constexpr (NEED_STRIPES) stripe.escape(0.0);
+    if constexpr (NEED_STRIPES) stripe.escape(0.0f);
 
     return true;
 }

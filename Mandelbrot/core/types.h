@@ -15,16 +15,23 @@ enum class KernelFeatures
     COUNT
 };
 
-enum struct KernelMode : int
+enum struct KernelMode : uint32_t
 {
-    NO_PERTURBATION              = 0,
-    PERTURBATION                 = 1,
-    PERTURBATION_SIMD            = 2, // kept for development / easier debugging
-    PERTURBATION_SIMD_UNROLLED   = 3,
+    NO_PERTURBATION                   = 0,
+    PERTURBATION                      = 1,
+    PERTURBATION_SIMD                 = 2, // kept for development / easier debugging
+    PERTURBATION_SIMD_UNROLLED        = 3,
 
     COUNT,
     AUTO = COUNT, // Same value as COUNT to avoid being included in constexpr_dispatch 'build_table'
-    PERTURBATION_MASK = PERTURBATION | PERTURBATION_SIMD | PERTURBATION_SIMD_UNROLLED
+};
+
+static inline const char* KernelModeNames[(int)KernelMode::COUNT] =
+{
+    "NO_PERTURBATION",
+    "PERTURBATION",
+    "PERTURBATION_SIMD",
+    "PERTURBATION_SIMD_UNROLLED"
 };
 
 // todo: find way to put inside SIM_BEG ns (wasm32 error, must be in global)
@@ -35,7 +42,8 @@ SIM_BEG;
 
 using namespace bl;
 
-constexpr double INSIDE_MANDELBROT_SET = std::numeric_limits<double>::max();
+//constexpr double INSIDE_MANDELBROT_SET = std::numeric_limits<double>::max();
+constexpr double INSIDE_MANDELBROT_SET = std::numeric_limits<float>::max();
 const double INSIDE_MANDELBROT_SET_SKIPPED = std::nextafter(INSIDE_MANDELBROT_SET, 0.0f);
 
 enum MandelFlag : uint32_t
@@ -55,6 +63,16 @@ enum MandelFlag : uint32_t
     MANDEL_VERSION_MASK   = 0xFF000000u, // max 255 versions
 
     MANDEL_VERSION_BITSHIFT = 24
+};
+
+enum MandelPhase : int
+{
+    PHASE_27X,
+    PHASE_9X,
+    PHASE_3X,
+    PHASE_1X,
+    //
+    PHASE_COUNT
 };
 
 enum struct MandelInteriorForwarding

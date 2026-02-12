@@ -1,21 +1,22 @@
 #pragma once
 
-#include "shading.h"
+#include <bitloop.h>
+
+#include "../shading/shading.h"
 #include "conversions.h"
+
 #include <cmath>
 #include <algorithm>
 
-#include <bitloop.h>
-
 /// official kernels
-#include "kernels/kernel_mandel.hpp"
-#include "kernels/kernel_mandel_perturb.hpp"
-#include "kernels/kernel_mandel_perturb_simd.hpp"
-#include "kernels/kernel_mandel_perturb_simd_unrolled.hpp"
+#include "../kernels/kernel_mandel.hpp"
+#include "../kernels/kernel_mandel_perturb.hpp"
+#include "../kernels/kernel_mandel_perturb_simd.hpp"
+#include "../kernels/kernel_mandel_perturb_simd_unrolled.hpp"
 
 /// experimental kernels
-#include "kernels/kernel_mandel_inertial.hpp"
-#include "kernels/kernel_newton.hpp"
+//#include "../kernels/kernel_mandel_inertial.hpp"
+//#include "../kernels/kernel_newton.hpp"
 
 SIM_BEG;
 
@@ -43,35 +44,48 @@ FORCE_INLINE bool interiorCheck(T x0, T y0)
 
 /// ----- calculate raw [iter, dist, stripe] values for each field pixel -----
 template<typename T, KernelFeatures F, KernelMode K>
-bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
+bool Mandelbrot_Scene::compute_mandelbrot(int timeout, double& field_compute_ms)
 {
-    typedef f64 T_lo;
-
     int threads = Thread::threadCount();
     int compute_tiles = threads;
 
+    EscapeField& pending_field = pendingField();
+    WorldRasterGrid128& pending_grid = pendingRasterGrid();
+
     f32 tiles_sqrt = ceil(sqrt((f32)compute_tiles));
-    int tile_w = (int)ceil((f32)pending_bmp->width() / tiles_sqrt);
-    int tile_h = (int)ceil((f32)pending_bmp->height() / tiles_sqrt);
+    int tile_w = (int)ceil((f32)pending_grid.rasterWidth() / tiles_sqrt);
+    int tile_h = (int)ceil((f32)pending_grid.rasterHeight() / tiles_sqrt);
     bool frame_complete = false;
 
-    if constexpr ((bool)(K & KernelMode::PERTURBATION_MASK))
+    if constexpr (
+        K == KernelMode::PERTURBATION ||
+        K == KernelMode::PERTURBATION_SIMD || 
+        K == KernelMode::PERTURBATION_SIMD_UNROLLED)
     {
         // get high precision anchor world pos
-        RefOrbitLo<T_lo> orbit_lo;
         Vec2<T> anchor = camera.pos<T>();
 
         // calculate reference orbit in high precision, downcast to low
+        //if (anchor_dd != ref_orbit_anchor)
         {
+            // todo: You can only reuse last ref orbit if (iter_lim <= old iter_lim)
+            //       For steady-zooms, calculate once at the target depth. For interaction,
+            //       increase 'used' ceil(iter_lim, 50)
+
             RefOrbit<T> orbit_hi;
             build_ref_orbit<T, F>(anchor.x, anchor.y, iter_lim, orbit_hi);
-            downcast_orbit<T, T_lo, F>(orbit_hi, orbit_lo);
+            downcast_orbit<T, T_lo, F>(orbit_hi, ref_orbit_lo);
+
+            //ref_orbit_anchor = anchor_dd;
+            //blPrint() << "recalculated reference orbit";
         }
 
+        SimpleTimer timer;
+
         // run perturbation kernel for remaining tiles pixels
-        frame_complete = pending_bmp->forEachWorldTilePixel<T>(tile_w, tile_h, P, [&](int x, int y, T wx, T wy)
+        frame_complete = pending_grid.forEachWorldTilePixel<T>(tile_w, tile_h, P, [&](int x, int y, T wx, T wy)
         {
-            EscapeFieldPixel& field_pixel = pending_field->at(x, y);
+            EscapeFieldPixel& field_pixel = pending_field.at(x, y);
 
             if (interiorCheck(wx, wy)) {
                 field_pixel.depth = INSIDE_MANDELBROT_SET_SKIPPED;
@@ -95,12 +109,17 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
             #endif
 
             if constexpr (K == KernelMode::PERTURBATION_SIMD_UNROLLED)
-                mandel_kernel_perturb_simd_unrolled<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
+                mandel_kernel_perturb_simd_unrolled<T_lo, F>(ref_orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
             else if constexpr (K == KernelMode::PERTURBATION_SIMD)
-                mandel_kernel_perturb_simd<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe MANDEL_ENXTENDED_ARG);
+                mandel_kernel_perturb_simd<T_lo, F>(ref_orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe MANDEL_ENXTENDED_ARG);
             else
-                mandel_kernel_perturb<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
-
+                mandel_kernel_perturb<T_lo, F>(ref_orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
+            //{
+            //    f32 _depth, _dist;
+            //    mandel_kernel_perturb_32<T_lo, F>(ref_orbit_lo, dcx_lo, dcy_lo, iter_lim, _depth, _dist, stripe);
+            //    depth = (f64)_depth;
+            //    dist = (f64)_dist;
+            //}
 
             field_pixel.set(depth, dist, stripe);
 
@@ -110,30 +129,33 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
             #endif
         }, compute_tiles, timeout);
 
-        // grab most up-to-date field
-        EscapeField* complete_field = active_field;
-        if (frame_complete)
-            complete_field = pending_field; // prefer high-res field
-        else if (!complete_field)
-            blBreak();                      // shouldn't reach here - phase 0 is always one-shot
+        field_compute_ms = timer.elapsed();
 
+        // grab most up-to-date field
+
+        // Normalization field isn't rendered. In "low accuracy" mode, use the latest complete field the moment it becomes available
+        EscapeField* complete_field = &activeField();
+
+        if (frame_complete)
+            complete_field = &pending_field; // prefer high-res field
+        
         // run perturbation kernel on normalization points (reusing existing "currently active" field first where acceptable)
-        double bmp_scale = phaseBmpScale(complete_field->compute_phase);
+        double bmp_scale = phaseDownscaleFactor(complete_field->phase);
         double fdp_tolerance = 9.0 * (1.0 - normalize_field_precision);
         double fdp_tolerance2 = fdp_tolerance * fdp_tolerance;
 
         norm_field.forEach([&](NormalizationPixel& field_pixel)
         {
-            // already done 100% precise manual calculation on previous frame? skip
+            // already done 100% precise manual calculation on previous mid-compute frame? skip
             if (field_pixel.is_final) return;
-
+            
             DVec2 fp = field_pixel.stage_pos / bmp_scale;
             if (fp.x >= 0.0 && fp.y >= 0.0 && fp.x < complete_field->w && fp.y < complete_field->h)
             {
                 IVec2 p = (IVec2)fp;
                 double fdpf = (fp - ((DVec2)p)).mag2(); // delta dist (pixel fraction)
                 double fdp = (fdpf * bmp_scale);
-
+            
                 if (fdp < fdp_tolerance2)
                 {
                     EscapeFieldPixel& existing_pixel = complete_field->at(p.x, p.y);
@@ -158,16 +180,22 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
             #endif
 
             if constexpr (K == KernelMode::PERTURBATION_SIMD_UNROLLED)
-                mandel_kernel_perturb_simd_unrolled<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
+                mandel_kernel_perturb_simd_unrolled<T_lo, F>(ref_orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
             else if constexpr (K == KernelMode::PERTURBATION_SIMD)
-                mandel_kernel_perturb_simd<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe MANDEL_ENXTENDED_ARG);
+                mandel_kernel_perturb_simd<T_lo, F>(ref_orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe MANDEL_ENXTENDED_ARG);
             else
-                mandel_kernel_perturb<T_lo, T, F>(orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
+                mandel_kernel_perturb<T_lo, F>(ref_orbit_lo, dcx_lo, dcy_lo, iter_lim, depth, dist, stripe);
+            //{
+            //    f32 _depth, _dist;
+            //    mandel_kernel_perturb_32<T_lo, F>(ref_orbit_lo, dcx_lo, dcy_lo, iter_lim, _depth, _dist, stripe);
+            //    depth = (f64)_depth;
+            //    dist = (f64)_dist;
+            //}
 
             field_pixel.set(depth, dist, stripe);
 
             // don't recalculate
-            field_pixel.is_final = true;
+            ///field_pixel.is_final = true;
 
             #if MANDEL_EXTENDED_FIELD_STATS
             #undef MANDEL_ENXTENDED_ARG
@@ -176,9 +204,11 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
     }
     else // standard kernel (no perturbation)
     {
-        frame_complete = pending_bmp->forEachWorldTilePixel<T>(tile_w, tile_h, P, [&](int x, int y, T wx, T wy)
+        SimpleTimer timer;
+
+        frame_complete = pending_grid.forEachWorldTilePixel<T>(tile_w, tile_h, P, [&](int x, int y, T wx, T wy)
         {
-            EscapeFieldPixel& field_pixel = pending_field->at(x, y);
+            EscapeFieldPixel& field_pixel = pending_field.at(x, y);
 
             if (interiorCheck(wx, wy)) {
                 field_pixel.depth = INSIDE_MANDELBROT_SET_SKIPPED;
@@ -196,14 +226,16 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
             field_pixel.set(depth, dist, stripe);
     
         }, compute_tiles, timeout);
+
+        field_compute_ms = timer.elapsed();
     
         norm_field.forEach([&](NormalizationPixel& field_pixel)
         {
             // already calculated on previous frame? skip
             if (field_pixel.is_final) return;
     
-            IVec2 p = field_pixel.stage_pos / phaseBmpScale(pending_field->compute_phase);
-            EscapeFieldPixel* existing_pixel = pending_field->get(p.x, p.y);
+            IVec2 p = field_pixel.stage_pos / phaseDownscaleFactor(pending_field.phase);
+            EscapeFieldPixel* existing_pixel = pending_field.get(p.x, p.y);
     
             if (existing_pixel) {
                 field_pixel.set(*existing_pixel);
@@ -224,35 +256,85 @@ bool Mandelbrot_Scene::compute_mandelbrot(int timeout)
     return frame_complete;
 }
 
-
-template<bool Normalize_Depth>
-FORCE_INLINE f64 toNormalizedDepth(f64 depth, f64 min_depth, f64 log1p_weight)
-{
-    if constexpr (Normalize_Depth)
-    {
-        f64 depth_from_floor = depth - min_depth;
-        if (depth_from_floor < 0.0) depth_from_floor = 0.0;
-        return math::linearLog1pLerp(depth_from_floor, log1p_weight);
-    }
-    else
-        return math::linearLog1pLerp(depth, log1p_weight);
-}
-
-// returns signed log-normalized distance (depending on inversion)
-template<bool Invert>
-FORCE_INLINE f64 toNormalizedDist(f64 dist, f64 stable_min_dist, f64 stable_max_dist)
-{
-    f64 rescaled_dist = log(dist);
-    return math::lerpFactor(rescaled_dist, stable_min_dist, stable_max_dist);
-}
-
 template<KernelFeatures F>
-FORCE_INLINE f32 toNormalizedStripe(const StripeAccum& stripe, f32 phase)
+FORCE_INLINE f32 resolveStripe(const StripeAccum& stripe, f32 phase)
 {
     const double LOG_ER2 = log_escape_radius2<F>();
     const float cphi = std::cos(phase);
     const float sphi = std::sin(phase);
     return stripeFromAccum(stripe, LOG_ER2, cphi, sphi);
+}
+
+template<bool Normalize_Depth>
+FORCE_INLINE f32 toFinalDepth(f64 depth, f64 raw_min_depth, f64 log1p_weight, f64 cycle_iters, f32 iter_ratio)
+{
+    if constexpr (Normalize_Depth)
+    {
+        f64 depth_from_floor = depth - raw_min_depth;
+        if (depth_from_floor < 0.0) depth_from_floor = 0.0;
+        return (f32)(math::linearLog1pLerp(depth_from_floor, log1p_weight) / cycle_iters) * iter_ratio;
+    }
+    else
+        return (f32)(math::linearLog1pLerp(depth, log1p_weight) / cycle_iters) * iter_ratio;
+}
+
+FORCE_INLINE f64 expEase01_poly5(f64 t)
+{
+    // approx (exp(t)-1)/(e-1)
+    constexpr f64 c1 = 0.5820155208947859;
+    constexpr f64 c2 = 0.29049237125998606;
+    constexpr f64 c3 = 0.09911540029626577;
+    constexpr f64 c4 = 0.020296140335692475;
+    constexpr f64 c5 = 0.008080567213269772;
+    return t * (c1 + t * (c2 + t * (c3 + t * (c4 + t * c5))));
+}
+
+FORCE_INLINE f64 clamp01(f64 x)
+{
+    return (x < 0.0) ? 0.0 : (x > 1.0 ? 1.0 : x);
+}
+
+template<bool Invert>
+FORCE_INLINE f32 toFinalDist(
+    f64 raw_dist, f64 min_log_dist, f64 max_log_dist,
+    ToneManager<f64>& tone, f64 cycle_dist, f32 dist_ratio)
+{
+    constexpr f64 e_m1 = bl::exp(1.0) - 1.0;
+    constexpr f64 inv_e_m1 = 1.0 / e_m1;
+    constexpr f64 k_min = -inv_e_m1; // = -1/(e-1)
+    constexpr f64 k_floor = -16.0; // exp(-16) ~ 1e-7
+
+    f64 t_raw;
+    if (raw_dist <= 0.0)
+        t_raw = std::numeric_limits<double>::lowest();
+    else
+    {
+        const f64 inv_range = 1.0 / (max_log_dist - min_log_dist);
+        t_raw = (std::log(raw_dist) - min_log_dist) * inv_range;
+    }
+
+    f64 t;
+    if (t_raw <= k_floor)  t = k_min;
+    else if (t_raw >= 1.0) t = 1.0;
+    else if (t_raw >= 0.0) t = expEase01_poly5(t_raw); // t = (std::exp(t) - 1.0) / e_m1;
+    else                   t = (std::exp(t_raw) - 1.0) * inv_e_m1; // slow path
+
+    t += inv_e_m1;
+    t = tone.applyAndDenormalize(t);
+
+    if constexpr (Invert)
+        t = -t;
+
+    return (f32)((t / cycle_dist) * (f64)dist_ratio);
+}
+
+template<KernelFeatures F>
+FORCE_INLINE f32 toFinalStripe(float stripe, float raw_mean_stripe, ToneManager<f32>& tone, f32 stripe_ratio)
+{
+    //float s = resolveStripe<F>(stripe, phase);
+    stripe = (stripe - raw_mean_stripe);
+    stripe = tone.apply(stripe) - 0.5f;
+    return stripe * stripe_ratio;
 }
 
 ///template<size_t BINS>
@@ -332,15 +414,17 @@ template<typename T, KernelFeatures F>
 void Mandelbrot_Scene::calculate_normalize_info()
 {
     // todo: move min/max/mean props to normalization field? It's field-independant
+
+    EscapeField& active_field = activeField();
     
     // Calculate normalized dist
     f64 sharpness_ratio = ((100.0 - dist_params.cycle_dist_sharpness) / 100.0 + 0.00001);
-    f128 r1 = f128(0.1) / camera.relativeZoom<f128>();
-    f128 r2 = f128(10.0) / camera.relativeZoom<f128>();
-    f128 stable_min_raw_dist = r1 * sharpness_ratio;
-    f128 stable_max_raw_dist = r2;
-    f64  stable_min_dist = (f64)log(stable_min_raw_dist);
-    f64  stable_max_dist = (f64)log(stable_max_raw_dist);
+    f64 r1 = 0.1 / camera.relativeZoom<f64>();
+    f64 r2 = 10.0 / camera.relativeZoom<f64>();
+    f64 raw_min_dist = r1 * sharpness_ratio;
+    f64 raw_max_dist = r2;
+    f64 log_min_dist = std::log(raw_min_dist);
+    f64 log_max_dist = std::log(raw_max_dist);
 
     constexpr size_t BINS = 256;
     constexpr u32 W_SCALE = 1u << 20; // ~1e6 precision
@@ -357,25 +441,32 @@ void Mandelbrot_Scene::calculate_normalize_info()
 
     std::vector<WeightHist> buckets(Thread::threadCount());
 
-    // first-pass: establish ITER limits (todo: use histogram here instead of hard limits)
-    active_field->min_depth = std::numeric_limits<f64>::max();
-    active_field->max_depth = std::numeric_limits<f64>::lowest();
-
-    norm_field.forEach([&](NormalizationPixel& field_pixel) 
+    auto raw_depth_ranges = Thread::forEachBatch(norm_field.world_field, [&](std::span<NormalizationPixel> batch)
     {
-        f64 depth = field_pixel.depth;
-        if (depth < INSIDE_MANDELBROT_SET_SKIPPED)
+        f64 raw_min_depth = std::numeric_limits<f64>::max();
+        f64 raw_max_depth = std::numeric_limits<f64>::lowest();
+
+        for (NormalizationPixel& field_pixel : batch)
         {
-            if (depth < active_field->min_depth) active_field->min_depth = depth;
-            if (depth > active_field->max_depth) active_field->max_depth = depth;
+            f64 depth = field_pixel.depth;
+            if (depth < INSIDE_MANDELBROT_SET_SKIPPED)
+            {
+                if (depth < raw_min_depth) raw_min_depth = depth;
+                if (depth > raw_max_depth) raw_max_depth = depth;
+            }
         }
+
+        return DRange{ raw_min_depth, raw_max_depth };
     });
+
+    DRange raw_depth_range = DRange::mergeExpand(raw_depth_ranges);
 
     u64 total_w = 0;
     f64 total_wstripe = 0;
 
     if (!steady_zoom)
     {
+        // Use normalization field to sample mean stripe value
         Thread::forEachBatch(norm_field.world_field, [&](std::span<NormalizationPixel> batch, int ti)
         {
             auto& bucket = buckets[ti];
@@ -394,7 +485,7 @@ void Mandelbrot_Scene::calculate_normalize_info()
                     u64 w = (u64)std::llround((f64)field_pixel.weight * (f64)W_SCALE);
                     total_w += w;
 
-                    f32 normalized_stripe = toNormalizedStripe<F>(field_pixel.stripe, stripe_params.phase);
+                    f32 normalized_stripe = resolveStripe<F>(field_pixel.stripe, stripe_params.phase);
 
                     size_t bin = (size_t)std::floor(normalized_stripe * (BINS - 1));
                     bin = std::clamp(bin, (size_t)0, BINS - 1);
@@ -420,81 +511,101 @@ void Mandelbrot_Scene::calculate_normalize_info()
         }
     }
 
-    // stripe magnutide (histogram version - what the below approximation tries to mimic)
-    ///f32 stripe_mag_hist;
-    ///smooth_histogram<BINS>(hist_w, 2);
-    ///constexpr f32 TAIL_FRAC = 0.05f;
-    ///const u64 rank_lo = (u64)std::floor(TAIL_FRAC * (f64)(total_w - 1));
-    ///const u64 rank_hi = (u64)std::floor((1.0 - TAIL_FRAC) * (f64)(total_w - 1));
-    ///const f32 stripe_lo = weighted_quantile_from_hist<BINS>(hist_w, rank_lo, total_w);
-    ///const f32 stripe_hi = weighted_quantile_from_hist<BINS>(hist_w, rank_hi, total_w);
-    ///stripe_mag_hist = stripe_hi - stripe_lo;
-
     // stripe magnitude (fairly good approximation from zoom + spline)
-    // avoiding use of histogram for stripe magnitude allows for smooth 'phase' animation
+    // avoiding use of histogram for stripe magnitude allows for smoother 'phase' animation
     f32 zf = (f32)bl::log10(camera.relativeZoom<f128>());
     f32 stripe_mag_dynamic = MandelSplines::stripe_zf_spline(zf) / zf;
 
-    // dev: compare normalized zoom magnitude computed by histogram, collect plots for x/y graph for manual spline approximation
-    ///if (stripe_weight > 0.1 && zf_raw > 0.1)
-    ///{
-    ///    f32 ideal_numerator = (stripe_hi - stripe_lo) * zf_raw;
-    ///    ideal_zf_numerator_map.push_back(std::pair(zf_raw, ideal_numerator));
-    ///    sort_and_dedup(ideal_zf_numerator_map);
-    ///}
-    ///f32 stripe_mag = stripe_mag_from_hist ? stripe_mag_hist : stripe_mag_dynamic;
+    /// // ---- stripe magnutide (histogram version - what the below approximation tries to mimic) ----
+    /// f32 stripe_mag_hist;
+    /// smooth_histogram<BINS>(hist_w, 2);
+    /// constexpr f32 TAIL_FRAC = 0.05f;
+    /// const u64 rank_lo = (u64)std::floor(TAIL_FRAC * (f64)(total_w - 1));
+    /// const u64 rank_hi = (u64)std::floor((1.0 - TAIL_FRAC) * (f64)(total_w - 1));
+    /// const f32 stripe_lo = weighted_quantile_from_hist<BINS>(hist_w, rank_lo, total_w);
+    /// const f32 stripe_hi = weighted_quantile_from_hist<BINS>(hist_w, rank_hi, total_w);
+    /// stripe_mag_hist = stripe_hi - stripe_lo;
+    /// 
+    /// // ---- dev: compare normalized zoom magnitude computed by histogram, collect plots for x/y graph for manual spline approximation ----
+    /// if (stripe_weight > 0.1 && zf_raw > 0.1)
+    /// {
+    ///     f32 ideal_numerator = (stripe_hi - stripe_lo) * zf_raw;
+    ///     ideal_zf_numerator_map.push_back(std::pair(zf_raw, ideal_numerator));
+    ///     sort_and_dedup(ideal_zf_numerator_map);
+    /// }
+    /// f32 stripe_mag = stripe_mag_from_hist ? stripe_mag_hist : stripe_mag_dynamic;
 
     f32 stripe_mag = stripe_mag_dynamic;
     f32 stripe_mean;
 
     if (!steady_zoom)
-    {
         stripe_mean = (f32)(total_wstripe / (f64)total_w);
-    }
     else
-    {
         stripe_mean = stripe_mean_locked;
-    }
+    
+    // set min/max/mean values
+    {
+        active_field.raw_min_depth = raw_depth_range.lo;//raw_min_depth;
+        active_field.raw_max_depth = raw_depth_range.hi;//raw_max_depth;
+        active_field.raw_min_dist = raw_min_dist;
+        active_field.raw_max_dist = raw_max_dist;
+        active_field.log_min_dist = log_min_dist;
+        active_field.log_max_dist = log_max_dist;
 
-    active_field->mean_stripe = stripe_mean;
-    active_field->stable_min_dist = stable_min_dist;
-    active_field->stable_max_dist = stable_max_dist;
+        active_field.raw_min_stripe  = stripe_mean - stripe_mag;
+        active_field.raw_max_stripe  = stripe_mean + stripe_mag;
+        active_field.raw_mean_stripe = stripe_mean;
+    }
 
     dist_tone   .setParams(dist_tone_params);
     stripe_tone .setParams(stripe_tone_params);
     dist_tone   .configureFieldInfo(0.0f, 1.0f, 0.0f);
     stripe_tone .configureFieldInfo(-stripe_mag, stripe_mag, 0.0f);
 
-    if (active_field->min_depth == std::numeric_limits<f64>::max()) 
-        active_field->min_depth = 0;
+    if (active_field.raw_min_depth == std::numeric_limits<f64>::max()) 
+        active_field.raw_min_depth = 0;
 
-    if (iter_params.cycle_iter_dynamic_limit)
+    if (iter_params.iter_dynamic_limit)
     {
         /// "color_cycle_iters" represents ratio of (assumed) iter_lim
-        f64 assumed_iter_lim = mandelbrotIterLimit(camera.relativeZoom<f128>()) * 0.5;
-        f64 color_cycle_iters = iter_params.cycle_iter_value * assumed_iter_lim;
+        f64 assumed_iter_lim = mandelbrotIterLimit(camera.relativeZoom<f128>());
+        f64 color_cycle_iters = iter_params.iter_cycle_value * assumed_iter_lim;
 
-        active_field->log_color_cycle_iters = math::linearLog1pLerp(color_cycle_iters, iter_params.cycle_iter_log1p_weight);
+        active_field.log_color_cycle_iters = math::linearLog1pLerp(color_cycle_iters, iter_params.iter_log1p_weight);
     }
     else
     {
-        /// "cycle_iter_value" represents actual iter_lim
-        active_field->log_color_cycle_iters = math::linearLog1pLerp(iter_params.cycle_iter_value, iter_params.cycle_iter_log1p_weight);
+        /// "iter_cycle_value" represents actual iter_lim
+        active_field.log_color_cycle_iters = math::linearLog1pLerp(iter_params.iter_cycle_value, iter_params.iter_log1p_weight);
     }
-
-    active_field->cycle_dist_value = dist_params.cycle_dist_value;
 }
 
 
-/// ----- calculates final_iter, final_dist, final_stripe -----
+/// ----- calculates final_iter, final_dist, final_stripe & prepares data for shader -----
 template<typename T, KernelFeatures F, bool Normalize_Depth, bool Invert_Dist, bool Show_Optimized>
 void Mandelbrot_Scene::normalize_field()
 {
-    f64 stable_min_dist = active_field->stable_min_dist;
-    f64 stable_max_dist = active_field->stable_max_dist;
+    // todo: implement with GLSL shader
 
-    f64 cycle_iters = active_field->log_color_cycle_iters;
-    f32 cycle_dist = (f32)active_field->cycle_dist_value;
+    EscapeField& field = activeField();
+    WorldRasterGrid128& grid = activeRasterGrid();
+
+    // raw limits / mean values
+    f64 raw_min_depth   = field.raw_min_depth;
+    f64 raw_max_depth   = field.raw_max_depth;
+
+    //f64 raw_min_dist    = field->raw_min_dist;
+    f64 raw_max_dist    = field.raw_max_dist;
+    f64 log_min_dist    = field.log_min_dist;
+    f64 log_max_dist    = field.log_max_dist;
+
+    f32 raw_min_stripe  = field.raw_min_stripe;
+    f32 raw_max_stripe  = field.raw_max_stripe;
+    f32 raw_mean_stripe = field.raw_mean_stripe;
+
+    // normalized (not final) cycle sizes for repeating patterns
+    f64 cycle_iters     = field.log_color_cycle_iters;
+    f32 cycle_dist      = (f32)dist_params.dist_cycle_value;
 
     f32 iter_ratio, dist_ratio, stripe_ratio;
     shadingRatios(
@@ -502,14 +613,26 @@ void Mandelbrot_Scene::normalize_field()
         iter_ratio, dist_ratio, stripe_ratio
     );
 
-    active_bmp->forEachPixel([&](int x, int y)
+    field.final_min_depth  = toFinalDepth<Normalize_Depth>(raw_min_depth, raw_min_depth, iter_params.iter_log1p_weight, cycle_iters, iter_ratio);
+    field.final_max_depth  = toFinalDepth<Normalize_Depth>(raw_max_depth, raw_min_depth, iter_params.iter_log1p_weight, cycle_iters, iter_ratio);
+    field.final_min_dist   = toFinalDist<Invert_Dist>(0.0, log_min_dist, log_max_dist, dist_tone, cycle_dist, dist_ratio);
+    field.final_max_dist   = toFinalDist<Invert_Dist>(raw_max_dist, log_min_dist, log_max_dist, dist_tone, cycle_dist, dist_ratio);
+    field.final_min_stripe = toFinalStripe<F>(raw_min_stripe, raw_mean_stripe, stripe_tone, stripe_ratio);
+    field.final_max_stripe = toFinalStripe<F>(raw_max_stripe, raw_mean_stripe, stripe_tone, stripe_ratio);
+
+    grid.forEachPixel([
+        this, &field,
+        raw_min_depth, raw_max_depth, log_min_dist, log_max_dist, raw_mean_stripe,
+        cycle_iters, cycle_dist,
+        iter_ratio, dist_ratio, stripe_ratio
+    ](int x, int y)
     {
-        EscapeFieldPixel& field_pixel = active_field->at(x, y);
+        EscapeFieldPixel& field_pixel = field.at(x, y);
         f64 depth = field_pixel.depth;
-        //if (depth >= INSIDE_MANDELBROT_SET_SKIPPED || active_field->get_skip_flag(x, y)) return;
+
         if constexpr (Show_Optimized)
         {
-            if (active_field->get_skip_flag(x, y))
+            if (field.get_skip_flag(x, y))
             {
                 field_pixel.final_depth = -2.0f;
                 return;
@@ -522,40 +645,31 @@ void Mandelbrot_Scene::normalize_field()
             return;
         }
 
-        f64 final_depth{};
-        f64 final_dist{};
+        f32 final_depth{};
+        f32 final_dist{};
         f32 final_stripe{};
 
         /// ====== ITER =======
         if constexpr ((bool)(F & KernelFeatures::ITER))
-        {
-            final_depth = toNormalizedDepth<Normalize_Depth>(depth, active_field->min_depth, iter_params.cycle_iter_log1p_weight);
-            final_depth /= cycle_iters;
-        }
+            final_depth = toFinalDepth<Normalize_Depth>(depth, raw_min_depth, iter_params.iter_log1p_weight, cycle_iters, iter_ratio);
 
         /// ====== DIST =======
         if constexpr ((bool)(F & KernelFeatures::DIST))
-        {
-            final_dist = toNormalizedDist<Invert_Dist>(field_pixel.dist, stable_min_dist, stable_max_dist);
-            final_dist = dist_tone.applyAndDenormalize(final_dist);
-            final_dist *= Invert_Dist ? -1.0 : 1.0;
-            final_dist /= cycle_dist;
-        }
+            final_dist = toFinalDist<Invert_Dist>(field_pixel.dist, log_min_dist, log_max_dist, dist_tone, cycle_dist, dist_ratio);
 
         /// ====== STRIPE =======
         if constexpr ((bool)(F & KernelFeatures::STRIPES))
         {
-            float s = toNormalizedStripe<F>(field_pixel.stripe, stripe_params.phase);
-            s = (s - active_field->mean_stripe);
-            final_stripe = stripe_tone.apply(s) - 0.5f;
+            float stripe = resolveStripe<F>(field_pixel.stripe, stripe_params.phase);
+            final_stripe = toFinalStripe<F>(stripe, raw_mean_stripe, stripe_tone, stripe_ratio);
         }
 
-        field_pixel.final_depth  = iter_ratio * (f32)final_depth;
-        field_pixel.final_dist   = dist_ratio * (f32)final_dist;
-        field_pixel.final_stripe = stripe_ratio * final_stripe;
+        field_pixel.final_depth  = final_depth;
+        field_pixel.final_dist   = final_dist;
+        field_pixel.final_stripe = final_stripe;
     });
 
-    active_field->fillFeaturesTexureData();
+    field.fillFeaturesTexureData();
 }
 
 SIM_END;
