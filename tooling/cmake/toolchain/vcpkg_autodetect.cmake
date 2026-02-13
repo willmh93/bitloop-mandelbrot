@@ -1,4 +1,10 @@
-﻿# vcpkg_autodetect.cmake
+﻿# avoid running bitloop discovery/manifest merging inside CMake try_compile scratch projects
+get_property(_bl_in_try_compile GLOBAL PROPERTY IN_TRY_COMPILE)
+if(_bl_in_try_compile)
+  return()
+endif()
+
+# vcpkg_autodetect.cmake
 #    - Searches for an existing vcpkg in the current directory/workspace
 #    - If one isn't found, it clones vcpkg at a pinned <sha>
 #    - Also picks a location for shared binary sources/cache to avoid unnecessary rebuilds
@@ -202,6 +208,7 @@ set(VCPKG_ROOT "${_vcpkg_dir}" CACHE PATH "" FORCE)
 
 # Pick a root location relative to the determined VCPKG_ROOT
 get_filename_component(_root_dir "${_vcpkg_dir}/.." REALPATH)
+set(_project_dir ${CMAKE_SOURCE_DIR})
 
 set(_cache_dir      "${_root_dir}/.vcpkg-cache")
 #set(_installed_dir  "${_root_dir}/.vcpkg-installed")
@@ -234,11 +241,12 @@ else()
 
     file(MAKE_DIRECTORY "${_bl_discovery_build_dir}")
 
-    set(_bl_discovery_toolchain "${_root_dir}/tooling/cmake/toolchain/discovery_toolchain.cmake")
+    set(_toolchain_dir "${CMAKE_CURRENT_LIST_DIR}")  # .../tooling/cmake/toolchain
+    set(_bl_discovery_toolchain "${_toolchain_dir}/discovery_toolchain.cmake")
 
     set(_cmd
         ${CMAKE_COMMAND}
-        -S ${_root_dir}
+        -S ${_project_dir}
         -B ${_bl_discovery_build_dir}
         -DBITLOOP_DISCOVERY=ON
         -DBITLOOP_INTERNAL_DISCOVERY_RUN=1
@@ -262,9 +270,18 @@ else()
         list(APPEND _cmd -DVCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET})
     endif()
 
-    execute_process(COMMAND ${_cmd} RESULT_VARIABLE _r)
+    execute_process(
+      COMMAND ${_cmd}
+      RESULT_VARIABLE _r
+      OUTPUT_VARIABLE _out
+      ERROR_VARIABLE  _err
+      COMMAND_ECHO STDOUT
+    )
+    
     if (NOT _r EQUAL 0)
-        message(FATAL_ERROR "Bitloop discovery configure failed (code=${_r}).\nCommand: ${_cmd}")
+        message(SEND_ERROR "Bitloop discovery LOG: ${_out}")
+        message(SEND_ERROR "Bitloop discovery ERROR: ${_err}")
+        message(FATAL_ERROR "Bitloop discovery configure failed.")
     endif()
 
     if (NOT EXISTS "${_bl_discovery_out_file}")
@@ -281,8 +298,8 @@ endif()
 
 
 # Guard against try-compile / foreign superprojects:
-# Only run when the current top-level source dir is your repo root.
-if(NOT "${CMAKE_SOURCE_DIR}" STREQUAL "${_root_dir}")
+# Only run when the current top-level source dir is your repo root
+if(NOT "${CMAKE_SOURCE_DIR}" STREQUAL "${_project_dir}")
   return()
 endif()
 
@@ -295,11 +312,11 @@ set(BL_VCPKG_MERGED_MANIFEST_DONE 1)
 set(BL_MERGED_MANIFEST_DIR "${CMAKE_BINARY_DIR}/_vcpkg_merged")
 file(MAKE_DIRECTORY "${BL_MERGED_MANIFEST_DIR}")
 
-# BL_CHILD_MANIFESTS already prepared by you
+# BL_CHILD_MANIFESTS already prepared by projects
 
-include("${_root_dir}/tooling/cmake/toolchain/merge_vcpkg_manifests.cmake")
+include("${_project_dir}/tooling/cmake/toolchain/merge_vcpkg_manifests.cmake")
 bl_merge_vcpkg_manifests(
-  ROOT_MANIFEST   "${_root_dir}/vcpkg.json"
+  ROOT_MANIFEST   "${_project_dir}/vcpkg.json"
   CHILD_MANIFESTS "${BL_CHILD_MANIFESTS}"
   OUT_DIR         "${BL_MERGED_MANIFEST_DIR}"
   MODE            "UNION"

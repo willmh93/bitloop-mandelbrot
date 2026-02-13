@@ -629,7 +629,7 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
             if (normalize_field_scale > 1.5 && normalize_field_quality > 0.4)
             {
                 ImGui::Spacing();
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0, 0.2, 0.2, 1.0));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
                 ImGui::TextUnformatted("Warning:\n   Sampling heavily outside of viewport,\n   performance may start to suffer.");
                 ImGui::PopStyleColor();
             }
@@ -639,7 +639,7 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
             if (normalize_field_quality > 0.25)
             {
                 ImGui::Spacing(); 
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0, 0.2, 0.2, 1.0));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
                 ImGui::TextUnformatted("Warning:\n   Large sample count,\n   performance may start to suffer.");
                 ImGui::PopStyleColor();
             }

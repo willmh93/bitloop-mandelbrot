@@ -1,18 +1,13 @@
 cmake_minimum_required(VERSION 3.21)
 project(Mandelbrot LANGUAGES C CXX)
 include(CheckCXXCompilerFlag)
+include("${CMAKE_CURRENT_LIST_DIR}/tooling/cmake/findBitloop.cmake")
 
-if (NOT TARGET bitloop::bitloop)
-  find_package(bitloop CONFIG REQUIRED)
-endif()
 
 # ---------------------------------  flags  ----------------------------------
 
-# if this Cmake project open as root, BITLOOP_DEV_MODE overrides child projects,
-# otherwise it inherits parent project value.
-
+# if this Cmake project open as root, BITLOOP_DEV_MODE overrides child projects
 # set(BITLOOP_DEV_MODE TRUE)
-
 
 # ------------------  configure project hierarchy/sources  -------------------
 
@@ -33,6 +28,7 @@ bitloop_finalize()
 #find_package(zfp CONFIG REQUIRED)
 #target_link_libraries(Mandelbrot PRIVATE zfp::zfp)
 
+
 if (MSVC)
   target_compile_options(Mandelbrot PRIVATE /bigobj)
 endif()
@@ -48,4 +44,3 @@ else()
 	target_compile_options(Mandelbrot PRIVATE -O3 -flto -msimd128 -mrelaxed-simd -ffast-math -ffp-contract=fast -fno-math-errno)
 	target_link_options(Mandelbrot PRIVATE -O3 -flto)
 endif()
-
