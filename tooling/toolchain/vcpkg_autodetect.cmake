@@ -241,7 +241,7 @@ else()
 
     file(MAKE_DIRECTORY "${_bl_discovery_build_dir}")
 
-    set(_toolchain_dir "${CMAKE_CURRENT_LIST_DIR}")  # .../tooling/cmake/toolchain
+    set(_toolchain_dir "${CMAKE_CURRENT_LIST_DIR}")  # .../tooling/toolchain
     set(_bl_discovery_toolchain "${_toolchain_dir}/discovery_toolchain.cmake")
 
     set(_cmd
@@ -314,7 +314,7 @@ file(MAKE_DIRECTORY "${BL_MERGED_MANIFEST_DIR}")
 
 # BL_CHILD_MANIFESTS already prepared by projects
 
-include("${_project_dir}/tooling/cmake/toolchain/merge_vcpkg_manifests.cmake")
+include("${_project_dir}/tooling/toolchain/merge_vcpkg_manifests.cmake")
 bl_merge_vcpkg_manifests(
   ROOT_MANIFEST   "${_project_dir}/vcpkg.json"
   CHILD_MANIFESTS "${BL_CHILD_MANIFESTS}"

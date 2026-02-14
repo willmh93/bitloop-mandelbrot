@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(Mandelbrot LANGUAGES C CXX)
 include(CheckCXXCompilerFlag)
-include("${CMAKE_CURRENT_LIST_DIR}/tooling/cmake/findBitloop.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/tooling/findBitloop.cmake")
 
 
 # ---------------------------------  flags  ----------------------------------
@@ -19,7 +19,7 @@ file(GLOB_RECURSE SIM_SOURCES CONFIGURE_DEPENDS
 )
 
 bitloop_new_project(Mandelbrot ${SIM_SOURCES})
-bitloop_add_dependency(Mandelbrot  "subprojects/Cardioid")
+bitloop_add_dependency(Mandelbrot "subprojects/Cardioid")
 bitloop_hide(Cardioid)
 bitloop_finalize()
 

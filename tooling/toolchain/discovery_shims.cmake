@@ -1,6 +1,6 @@
 # bitloop_discovery_shims.cmake
 
-# _ChatGPT_ record root once (GLOBAL PROPERTY, not a normal variable)
+# record root once (GLOBAL PROPERTY, not a normal variable)
 get_property(bl_root_set GLOBAL PROPERTY BL_ROOT_PROJECT SET)
 if(NOT bl_root_set)
   set_property(GLOBAL PROPERTY BL_ROOT_PROJECT "${CMAKE_SOURCE_DIR}")
@@ -30,7 +30,6 @@ macro(bitloop_add_dependency proj relpath)
     set_property(GLOBAL PROPERTY BL_CHILD_MANIFESTS "${m}")
   endif()
 
-  # _ChatGPT_ descend so children can register their own children
   if(EXISTS "${child_dir}/CMakeLists.txt")
     string(MD5 child_hash "${child_dir}")
     add_subdirectory("${child_dir}" "${CMAKE_BINARY_DIR}/_bl_discovery/${child_hash}" EXCLUDE_FROM_ALL)

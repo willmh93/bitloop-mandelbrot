@@ -32,5 +32,3 @@ endif()
 # Keep discovery fast and avoid spurious failures.
 set(CMAKE_C_COMPILER_WORKS   TRUE CACHE BOOL "" FORCE)
 set(CMAKE_CXX_COMPILER_WORKS TRUE CACHE BOOL "" FORCE)
-
-message(STATUS "discovery_toolchain.cmake <<<<<<<<<<<<<<<<<<<<<<<<")

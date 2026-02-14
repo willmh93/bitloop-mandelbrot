@@ -1,7 +1,7 @@
-# tooling/cmake/merge_vcpkg_manifests.cmake
+# tooling/merge_vcpkg_manifests.cmake
 #
 # Usage:
-#   include("${_root_dir}/tooling/cmake/merge_vcpkg_manifests.cmake")
+#   include("${_root_dir}/tooling/merge_vcpkg_manifests.cmake")
 #   bl_merge_vcpkg_manifests(
 #     ROOT_MANIFEST      "${_root_dir}/vcpkg.json"
 #     CHILD_MANIFESTS    "${BL_CHILD_MANIFESTS}"   # list of .../vcpkg.json files
