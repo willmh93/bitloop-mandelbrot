@@ -213,7 +213,7 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
 void Mandelbrot_Scene::renderShaderChain(Viewport* ctx) const
 {
     // todo: Not right when you do high SSAA renders?
-    FVec2 inv_size = FVec2(1.0f, 1.0f) / (FVec2)ctx->outputSize();
+    FVec2 inv_size = FVec2((f32)ctx->getGlobalScale()) / (FVec2)ctx->outputSize();
     
     const EscapeField& field = activeField();
     const WorldRasterGrid128& grid = activeRasterGrid();
