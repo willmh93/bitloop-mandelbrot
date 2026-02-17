@@ -47,7 +47,7 @@ struct IterParams
     bool    iter_dynamic_limit = false;
     bool    iter_normalize_depth = false;
     double  iter_log1p_weight = 1.0;
-    double  iter_cycle_value = 1.0f; // If dynamic, iter_lim ratio, else iter_lim
+    double  iter_cycle_value = 2.0f; // If dynamic, iter_lim ratio, else iter_lim
 };
 
 struct DistParams
@@ -119,7 +119,7 @@ inline float stripeFromAccum(const StripeAccum& st, double log_er2, float cphi, 
     float invW = 1.0f / (float)st.W;
     float avg = 0.5f + 0.5f * ((st.sum_sin * invW) * cphi + (st.sum_cos * invW) * sphi);
 
-    // prev: exclude last sample to reproduce your mix
+    // exclude last sample to reproduce mix
     float prev = avg;
     if (st.W > 1) {
         float invWm1 = 1.0f / (float)(st.W - 1);
@@ -131,8 +131,7 @@ inline float stripeFromAccum(const StripeAccum& st, double log_er2, float cphi, 
     // escape fraction: frac = 1 + log2( log(ER^2) / log(r2_escape) )
     float frac = 0.0f;
     if (st.escaped) {
-        //const double lr = std::max(st.log_r2_at_escape, 1e-300);
-        const double lr = std::max((f64)st.log_r2_at_escape, 1e-300);
+        const double lr = std::max(st.log_r2_at_escape, 1e-300);
         double val = 1.0 + std::log2(log_er2 / lr);
         if (val < 0.0) val = 0.0; else if (val > 1.0) val = 1.0;
         frac = (float)val;
@@ -242,6 +241,7 @@ struct EscapeField : public std::vector<EscapeFieldPixel>
     f32 raw_min_stripe  = 0;
     f32 raw_max_stripe  = 0;
     f32 raw_mean_stripe = 0;
+    f32 raw_mag_stripe = 0;
 
     // normalized iter cycle size (smaller repeats gradient at higher freq)
     f64 log_color_cycle_iters = 0;

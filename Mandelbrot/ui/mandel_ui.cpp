@@ -143,11 +143,11 @@ void Mandelbrot_Scene::UI::sidebar()
 
     ImGui::SeparatorText("Active State");
     populateCameraView();
-    populateQualityOptions();
     populateInputOptions();
     populateShaderEditor();
     populateGradientOptions();
     populateAnimation();
+    populateQualityOptions();
     //populateGradientPicker();
     populateCaptureOptions();
     //populateExperimental();
@@ -298,7 +298,6 @@ void Mandelbrot_Scene::UI::populateSavingLoading()
 }
 void Mandelbrot_Scene::UI::populateCameraView()
 {
-    bl_scoped(flatten);
     bl_scoped(camera);
 
     //static bool show_view_by_default = !platform()->is_mobile(); // Expect navigate by touch for mobile
@@ -308,23 +307,12 @@ void Mandelbrot_Scene::UI::populateCameraView()
         ImGui::Checkbox("Show Axis", &show_axis);
         ImGui::SameLine();
         ImGui::Dummy(scale_size(4, 0));
+        ImGui::SameLine();
         ImGui::Checkbox("Alignment Lines", &display_alignment_overlay);
 
         #if MANDEL_FEATURE_INTERACTIVE_CARDIOID
         bl_scoped(show_interactive_cardioid);
-        bl_scoped(ani_angle);
-        bl_scoped(ani_inc);
-        bl_scoped(animate_cardioid_angle);
-
-
-        ImGui::SameLine();
-        ImGui::Dummy(ImVec2(10.0f, 0.0f));
-        ImGui::SameLine();
-
-        if (!flatten && !platform()->is_mobile())
-        {
-            ImGui::Checkbox("Show Interactive Cardioid", &show_interactive_cardioid);
-        }
+        ImGui::Checkbox("Interactive Cardioid", &show_interactive_cardioid);
         #endif
 
         camera.populateUI({ -5.0, -5.0, 5.0, 5.0 });
@@ -333,6 +321,10 @@ void Mandelbrot_Scene::UI::populateCameraView()
         if (show_interactive_cardioid)
         {
             ImGui::BeginLabelledBox("Interactive Cardioid");
+
+            bl_scoped(ani_angle);
+            bl_scoped(ani_inc);
+            bl_scoped(animate_cardioid_angle);
 
             ImGui::Checkbox("Apply Animation", &animate_cardioid_angle);
             ImGui::SliderAngle("Angle", &ani_angle);
@@ -346,12 +338,13 @@ void Mandelbrot_Scene::UI::populateCameraView()
         ImGui::EndCollapsingHeaderBox();
     }
 }
+
+
 void Mandelbrot_Scene::UI::populateExamples()
 {
-    if (ImGui::CollapsingHeaderBox("Bookmarks / Examples", true))
+    if (ImGui::CollapsingHeaderBox("Examples", true))
     {
         bl_scoped(bookmark_manager);
-
 
         const float sx = ImGui::GetStyle().ItemSpacing.x;
         const float sy = ImGui::GetStyle().ItemSpacing.y;
@@ -359,155 +352,109 @@ void Mandelbrot_Scene::UI::populateExamples()
         const float btn_w = 128.0f, btn_h = 72.0f;
         const float btn_sw = scale_size(btn_w), btn_sh = scale_size(btn_h);
 
-        ImGuiStyle& style = ImGui::GetStyle();
-        //float avail_full = ImGui::GetContentRegionAvail().x;
-        //float min_btn_w = btn_w;
+        // red headers
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.5f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.6f, 0.3f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
 
-        for (int category_i = 0; category_i < bookmark_manager.size(); category_i++)
         {
-            auto [category_name, list] = bookmark_manager.at(category_i);
-            auto& bookmarks = list.getItems();
-
-            //if (ImGui::CollapsingHeader(category_name.c_str()))
-            ImGui::SeparatorText(category_name.c_str());
+            for (int category_i = 0; category_i < bookmark_manager.size(); category_i++)
             {
-                const int count = (int)bookmarks.size();
-
-                int rows = 3;
-                int cols = (int)std::ceil((f32)count / (f32)rows);
-
-                const float content_h = rows * btn_sh + (rows - 1) * sy;
-                const float strip_h = content_h + sy + style.ScrollbarSize;
-
-                //const float parent_scroll_y_before = ImGui::GetScrollY();
-                bool captured_wheel_for_child = false;
+                auto [category_name, list] = bookmark_manager.at(category_i);
+                auto& bookmarks = list.getItems();
 
                 ImGui::PushID(category_i);
-
-                if (ImGui::BeginChild("##examples_region", ImVec2(0.0f, strip_h), 0, ImGuiWindowFlags_HorizontalScrollbar))
+                if (ImGui::CollapsingHeaderBox(category_name.c_str()))
                 {
-                    for (int col = 0; col < cols; ++col)
+                    const int count = (int)bookmarks.size();
+                    const int rows_visible = 3;
+                    const float strip_h = rows_visible * btn_sh + (rows_visible - 1) * sy;
+
+                    if (ImGui::BeginChild("##examples_region", ImVec2(0.0f, strip_h), 0))
                     {
-                        if (col > 0)
-                            ImGui::SameLine(0.0f, sx);
+                        const float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
 
-                        ImGui::BeginGroup();
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
 
-                        for (int row = 0; row < rows; ++row)
+                        for (int idx = 0; idx < count; ++idx)
                         {
-                            int idx = col * rows + row;
-                            if (idx >= count)
-                                break;
-
                             MandelBookmark& bookmark = bookmarks[idx];
-
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
-                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
 
                             ImGui::PushID(idx);
                             if (ImGui::ImageButton("##bookmark", bookmark.thumbTexture(), ImVec2(btn_sw, btn_sh)))
                                 launchBookmark(bookmark.data);
-
                             ImGui::PopID();
 
-                            ImGui::PopStyleVar();
-                            ImGui::PopStyleColor(3);
+                            const float last_button_x2 = ImGui::GetItemRectMax().x;
+                            const float next_button_x2 = last_button_x2 + sx + btn_sw;
+
+                            if (idx + 1 < count && next_button_x2 < window_visible_x2)
+                                ImGui::SameLine(0.0f, sx);
                         }
 
-                        ImGui::EndGroup();
+                        ImGui::PopStyleVar();
+                        ImGui::PopStyleColor(3);
+
                     }
+                    ImGui::EndChild();
 
-                    const ImVec2 inner_min = ImGui::GetWindowPos() + ImGui::GetWindowContentRegionMin();
-                    const ImVec2 inner_max = ImGui::GetWindowPos() + ImGui::GetWindowContentRegionMax();
-                    const ImVec2 inner_size(inner_max.x - inner_min.x, inner_max.y - inner_min.y);
+                    bool allow_add_new = false;
 
-                    const ImVec2 old_cursor_screen = ImGui::GetCursorScreenPos();
-                    ImGui::SetCursorScreenPos(ImGui::GetWindowPos());
+                    #if MANDEL_DEV_MODE
+                    allow_add_new = true;
+                    #endif
 
-                    ImGui::InvisibleButton("##wheel_catcher", inner_size);
-                    ImGui::SetItemAllowOverlap();
+                    #ifndef BITLOOP_DEV_MODE
+                    // if RELEASE build, don't allow modifying bundled example bookmarks, even if in mandel dev mode
+                    if (category_name == "Examples")
+                        allow_add_new = false;
+                    #endif
 
-                    ImGuiIO& io = ImGui::GetIO();
-                    ImGuiWindow* child_window = ImGui::GetCurrentWindow();
-
-                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem) && io.MouseWheel != 0.0f)
+                    if (allow_add_new)
                     {
-                        blPrint() << rand() << " " << "Mouse Scroll Capture";
-                        ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
-
-                        const float step = ImGui::GetFontSize() * 8.0f;
-                        ImGui::SetScrollX(ImGui::GetScrollX() - io.MouseWheel * step);
-
-                        ImGuiContext& g = *ImGui::GetCurrentContext();
-                        g.WheelingWindow = child_window;
-                        g.WheelingWindowReleaseTimer = 1000.0f;
-                        captured_wheel_for_child = true;
-                    }
-
-                    ImGui::SetCursorScreenPos(old_cursor_screen);
-                }
-                
-                ImGui::EndChild();
-
-                //if (captured_wheel_for_child)
-                //    ImGui::SetScrollY(parent_scroll_y_before);
-
-                bool allow_add_new = false;
-
-                #if MANDEL_DEV_MODE
-                allow_add_new = true;
-                #endif
-
-                #ifndef BITLOOP_DEV_MODE
-                // if RELEASE build, don't allow modifying bundled example bookmarks, even if in mandel dev mode
-                if (category_name == "Examples")
-                    allow_add_new = false;
-                #endif
-
-                if (allow_add_new)
-                {
-                    //ImGui::PushID("bookmark_btns");
-                    
-                    if (ImGui::Button("Bookmark Active"))
-                    {
-                        // Generate bookmark on worker thread (since we also need to generate a thumbnail)
-                        bl_schedule([&, category_i, category_name](Mandelbrot_Scene& scene)
+                        if (ImGui::Button("Bookmark Active"))
                         {
-                            // Serialize Mandelbrot state
-                            std::string state_data = scene.serialize();
-
-                            // Grab a suitable thumbnail preset
-                            SnapshotPresetList all_presets = main_window()->getSnapshotPresetManager()->allPresets();
-                            CapturePreset* preset = all_presets.findByAlias("thumb128x72_hd");
-                            assert(preset != nullptr);
-
-                            std::string thumb_path = ProjectBase::activeProject()->root_path(
-                                "data/bookmarks/" + category_name + "/" + MandelBookmark(state_data).thumbFilename()
-                            );
-
-                            // Create bookmark, generate thumbnail image, load direct from memory (also saves to data/thumbnails/ for embedding)
-                            scene.beginSnapshot(*preset, thumb_path, [&, state_data, category_i](bytebuf& thumb_data, const CapturePreset& preset)
+                            // Generate bookmark on worker thread (since we also need to generate a thumbnail)
+                            bl_schedule([&, category_i, category_name](Mandelbrot_Scene& scene)
                             {
-                                MandelBookmark bookmark(state_data);
+                                // Serialize Mandelbrot state
+                                std::string state_data = scene.serialize();
 
-                                // Load thumbnail from memory
-                                bookmark.loadThumbnail(thumb_data, preset.width(), preset.height());
+                                // Grab a suitable thumbnail preset
+                                SnapshotPresetList all_presets = main_window()->getSnapshotPresetManager()->allPresets();
+                                CapturePreset* preset = all_presets.findByAlias("thumb128x72_hd");
+                                assert(preset != nullptr);
 
-                                // Finally, add bookmark to the target list
-                                MandelBookmarkList& list = bookmark_manager.at(category_i).second; /// todo: reaccessing UI from worker, maybe not thread-safe
-                                list.addItem(bookmark);
+                                std::string thumb_path = ProjectBase::activeProject()->root_path(
+                                    "data/bookmarks/" + category_name + "/" + MandelBookmark(state_data).thumbFilename()
+                                );
+
+                                // Create bookmark, generate thumbnail image, load direct from memory (also saves to data/thumbnails/ for embedding)
+                                scene.beginSnapshot(*preset, thumb_path, [&, state_data, category_i](bytebuf& thumb_data, const CapturePreset& preset)
+                                {
+                                    MandelBookmark bookmark(state_data);
+
+                                    // Load thumbnail from memory
+                                    bookmark.loadThumbnail(thumb_data, preset.width(), preset.height());
+
+                                    // Finally, add bookmark to the target list
+                                    MandelBookmarkList& list = bookmark_manager.at(category_i).second; /// todo: reaccessing UI from worker, maybe not thread-safe
+                                    list.addItem(bookmark);
+                                });
                             });
-                        });
+                        }
                     }
-                    
-                    //ImGui::PopID();
-                }
 
+                    ImGui::EndCollapsingHeaderBox();
+                }
                 ImGui::PopID();
             }
         }
+
+        ImGui::PopStyleColor(3);
 
         ImGui::EndCollapsingHeaderBox();
     }
@@ -551,7 +498,6 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
         if (!platform()->is_mobile())
         {
             bl_scoped(interior_forwarding);
-            //bl_scoped(interior_phases_contract_expand);
             bl_scoped(contract_expand_phases);
             bl_scoped(maxdepth_show_optimized);
 
@@ -961,6 +907,10 @@ void Mandelbrot_Scene::UI::populateInputOptions()
 }
 void Mandelbrot_Scene::UI::populateShaderEditor()
 {
+    if (platform()->is_mobile())
+        return; // shader editing on mobile is not really feasible. 
+                // todo: Provide template shaders and hook up shader inputs to UI controls (previous section)
+
     if (ImGui::CollapsingHeaderBox("Shader", false))
     {
         ImGuiContext& g = *ImGui::GetCurrentContext();
@@ -1189,6 +1139,38 @@ void Mandelbrot_Scene::UI::populateGradientOptions()
                 }
                 gradient.refreshCache();
             }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Invert"))
+            {
+                bl_scoped(gradient);
+                auto& marks = gradient.getMarks();
+
+                for (auto& mark : marks)
+                {
+                    auto c = Color(mark.color);
+                    c.r = 255 - c.r;
+                    c.g = 255 - c.g;
+                    c.b = 255 - c.b;
+                    memcpy(mark.color, c.vec4().data(), sizeof(float) * 4);
+                }
+
+                gradient.refreshCache();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Reverse"))
+            {
+                bl_scoped(gradient);
+                auto& marks = gradient.getMarks();
+ 
+                for (auto& mark : marks)
+                    mark.position = 1.0f - mark.position;
+
+                gradient.refreshCache();
+            }
+
+            
         }
         ImGui::EndLabelledBox();
 
@@ -1392,10 +1374,12 @@ void Mandelbrot_Scene::UI::populateMouseOrbit()
 
 void Mandelbrot_Scene::UI::populateCaptureOptions()
 {
+    if (platform()->is_mobile())
+        return;
+
     if (ImGui::CollapsingHeaderBox("Capture Options", false))
     {
         // ---------------- Permitted capture presets during batch snapshot ----------------
-        ///ImGui::SeparatorText("Allowed presets (for current state)");
         ImGui::BeginLabelledBox("Allowed presets (for current state)");
         auto& standard_presets = main_window()->getSnapshotPresetManager()->allPresets();
 
@@ -1462,12 +1446,12 @@ void Mandelbrot_Scene::UI::populateCaptureOptions()
 
 
         ImGui::SetNextItemWidthForSpace(required_space);
-        ImGui::SliderDouble("Zoom rate (per frame)", &steady_zoom_mult_speed, 0.01, 0.1,
+        ImGui::SliderDouble("Zoom rate", &steady_zoom_mult_speed, 0.01, 0.1,
             "%.2f", ImGuiSliderFlags_AlwaysClamp);
 
         constexpr double spin_mag = math::toRadians(0.1);
         ImGui::SetNextItemWidthForSpace(required_space);
-        ImGui::SliderAngle("Spin rate (per frame)", &steady_zoom_rotate_speed, -spin_mag, spin_mag,
+        ImGui::SliderAngle("Spin rate", &steady_zoom_rotate_speed, -spin_mag, spin_mag,
             2, ImGuiSliderFlags_AlwaysClamp);
 
         ImGui::EndLabelledBox();

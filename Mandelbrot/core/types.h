@@ -51,7 +51,7 @@ enum MandelFlag : uint32_t
     // bits
     MANDEL_DYNAMIC_ITERS        = 1u << 0,
     MANDEL_SHOW_AXIS            = 1u << 1,
-    MANDEL_FLATTEN              = 1u << 2,
+    //MANDEL_FLATTEN              = 1u << 2,
     MANDEL_DYNAMIC_COLOR_CYCLE  = 1u << 3,
     MANDEL_NORMALIZE_DEPTH      = 1u << 4,
     MANDEL_INVERT_DIST          = 1u << 5,

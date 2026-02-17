@@ -511,10 +511,30 @@ void Mandelbrot_Scene::calculate_normalize_info()
         }
     }
 
+    auto stripeMagFromZoom = [](const f128& rel_zoom) -> f32
+    {
+        const f32 zf = (f32)bl::log10(rel_zoom);
+        const f32 base_spline_mag = MandelSplines::stripe_zf_spline(zf);
+
+        if (zf != 0.0f)
+            return base_spline_mag / zf;
+
+        // log10(1) might return exactly 0, causing division by zero and NaN stripe magnitude
+        static const f32 slope0 = []() -> f32
+        {
+            constexpr f32 h = 1e-4f;
+            const f32 yp = MandelSplines::stripe_zf_spline(h);
+            const f32 ym = MandelSplines::stripe_zf_spline(-h);
+            return (yp - ym) * (0.5f / h);
+        }();
+
+        return slope0;
+    };
+
+
     // stripe magnitude (fairly good approximation from zoom + spline)
     // avoiding use of histogram for stripe magnitude allows for smoother 'phase' animation
-    f32 zf = (f32)bl::log10(camera.relativeZoom<f128>());
-    f32 stripe_mag_dynamic = MandelSplines::stripe_zf_spline(zf) / zf;
+    f32 stripe_mag_dynamic = stripeMagFromZoom(camera.relativeZoom<f128>());
 
     /// // ---- stripe magnutide (histogram version - what the below approximation tries to mimic) ----
     /// f32 stripe_mag_hist;
@@ -555,6 +575,7 @@ void Mandelbrot_Scene::calculate_normalize_info()
         active_field.raw_min_stripe  = stripe_mean - stripe_mag;
         active_field.raw_max_stripe  = stripe_mean + stripe_mag;
         active_field.raw_mean_stripe = stripe_mean;
+        active_field.raw_mag_stripe  = stripe_mag;
     }
 
     dist_tone   .setParams(dist_tone_params);

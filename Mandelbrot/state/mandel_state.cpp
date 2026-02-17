@@ -113,7 +113,7 @@ std::string MandelState::serialize() const
 
     if (dynamic_iter_lim)                  flags |= MANDEL_DYNAMIC_ITERS;
     if (show_axis)                         flags |= MANDEL_SHOW_AXIS;
-    if (flatten)                           flags |= MANDEL_FLATTEN;
+    //if (x)                               flags |= MANDEL_X; // removed flag (free bit to use on new version)
     if (iter_params.iter_dynamic_limit)    flags |= MANDEL_DYNAMIC_COLOR_CYCLE;
     if (iter_params.iter_normalize_depth)  flags |= MANDEL_NORMALIZE_DEPTH;
     if (dist_params.dist_invert)           flags |= MANDEL_INVERT_DIST;
@@ -296,7 +296,7 @@ bool MandelState::_deserialize(std::string_view sv, bool COMPRESS_CONFIG)
 
         dynamic_iter_lim                  = flags & MANDEL_DYNAMIC_ITERS;
         show_axis                         = flags & MANDEL_SHOW_AXIS;
-        flatten                           = flags & MANDEL_FLATTEN;
+        //x                               = flags & X; // unused
         iter_params.iter_dynamic_limit    = flags & MANDEL_DYNAMIC_COLOR_CYCLE;
         iter_params.iter_normalize_depth  = flags & MANDEL_NORMALIZE_DEPTH;
         dist_params.dist_invert           = flags & MANDEL_INVERT_DIST;

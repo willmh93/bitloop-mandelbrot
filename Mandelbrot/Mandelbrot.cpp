@@ -36,9 +36,6 @@ void Mandelbrot_Scene::sceneStart()
     for (int phase = 0; phase < PHASE_COUNT; phase++)
         phases[phase].shader.updateFragmentSource(init_shader_source);
 
-    phase_elapsed_mult_sma.setLength(2);
-    phase_elapsed_mult_sma_result = 6.5;
-
     for (int phase = 0; phase < PHASE_COUNT; phase++)
     {
         auto& timer = phase_elapsed_mult_sma_list[phase];
@@ -46,6 +43,10 @@ void Mandelbrot_Scene::sceneStart()
 
         phase_elapsed_mult_results[phase] = 6.5;
     }
+
+    #if MANDEL_UNVERSIONED_EXPERIMENTAL
+    experimental.init();
+    #endif
 }
 
 void Mandelbrot_Scene::sceneDestroy()
@@ -196,7 +197,7 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     collectStats(renormalize);
 
     #if MANDEL_UNVERSIONED_EXPERIMENTAL
-    processExperimental();
+    experimental.process();
     #endif
 
     first_frame = false;
@@ -280,7 +281,7 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
     }
 
     #if MANDEL_UNVERSIONED_EXPERIMENTAL
-    drawExperimental(ctx);
+    experimental.draw(ctx);
     #endif
     
     #if MANDEL_FEATURE_INTERACTIVE_CARDIOID

@@ -27,6 +27,10 @@
 #include "kernels/kernel_mandel.hpp"
 #include "kernels/ref_orbit.hpp"
 
+#if MANDEL_UNVERSIONED_EXPERIMENTAL
+#include "_unversioned/experimental.h"
+#endif
+
 SIM_BEG;
 
 using namespace bl;
@@ -203,8 +207,8 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
     std::array<f64, PHASE_COUNT>            phase_elapsed_mult_results;
 
     // todo: Move to MandelPhase
-    math::SMA<f64>                          phase_elapsed_mult_sma;
-    f64                                     phase_elapsed_mult_sma_result;
+    math::SMA<f64>                          phase_elapsed_mult_sma = math::SMA<f64>(2);
+    f64                                     phase_elapsed_mult_sma_result = 6.5;
     f64                                     phase_elapsted_estimated_final = 0;
 
     int compute_timeout = 0;
@@ -350,16 +354,7 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
     void processUndoRedo(bool normalization_opts_changed, bool gradient_changed);
 
     #if MANDEL_UNVERSIONED_EXPERIMENTAL
-    f64 input_angle = 0.0;
-    int    input_iters = 20;
-    int    input_quality = 2;
-
-    f64 plot_x, plot_y;
-    std::vector<std::vector<DVec2>> iter_paths;
-    std::vector<std::vector<DVec2>> ring_paths;
-
-    void processExperimental();
-    void drawExperimental(Viewport* ctx) const;
+    Mandel_Experimental experimental;
     #endif
 
     // processing (worker)

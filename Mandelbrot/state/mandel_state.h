@@ -44,7 +44,7 @@ struct MandelState
     PivotToneParams  dist_tone_params;
     PivotToneParams  stripe_tone_params;
 
-    double           gradient_shift                 = 0.0;
+    double           gradient_shift                 = 0.5;
     double           hue_shift                      = 0.0;
                                                     
     double           gradient_shift_step            = 0.0078;
@@ -57,11 +57,7 @@ struct MandelState
     bool             animate_gradient_shift = false;
     bool             animate_gradient_hue = false;
     bool             animate_stripe_phase = false;
-    
-    // Flatten   
-    bool         flatten = false;
-    double       flatten_amount = 0.0;
-
+  
     /// ─────────────────────── Normalization Info ───────────────────────
 
     double normalize_field_scale = 2.0;

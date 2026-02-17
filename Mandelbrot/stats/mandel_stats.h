@@ -24,13 +24,16 @@ struct MandelStats
 
     struct FieldInfo
     {
-        // raw min/max depth (computed directly from field)
+        // raw min/max features (computed directly from field)
         f64 raw_min_depth = 0;
         f64 raw_max_depth = 0;
         f64 raw_min_dist = 0;
         f64 raw_max_dist = 0;
         f32 raw_min_stripe = 0;
         f32 raw_max_stripe = 0;
+
+        f32 raw_mean_stripe = 0;
+        f32 raw_mag_stripe = 0;
 
         // final min/max values after normalization/toning/cycling
         f32 final_min_depth = 0;

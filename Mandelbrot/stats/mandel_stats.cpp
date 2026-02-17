@@ -41,8 +41,13 @@ void Mandelbrot_Scene::UI::populateStats()
 
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(cellPad.x + 8.0f, cellPad.y));
 
-        const float col1_w = ImGui::CalcTextSize("Active float precision").x
-            + ImGui::GetStyle().CellPadding.x;
+        #if MANDEL_EXTENDED_FIELD_STATS
+        const char* col1_longest = "Total dominance rebases";
+        #else
+        const char* col1_longest = "Kernel Features";
+        #endif
+
+        const float col1_w = ImGui::CalcTextSize(col1_longest).x + ImGui::GetStyle().CellPadding.x;
 
         bl_pull(stats, camera, deduced_kernel_mode, float_type, mandel_features, steady_zoom_pct, dt_last, computing_phase);
 
@@ -58,7 +63,7 @@ void Mandelbrot_Scene::UI::populateStats()
 
                 // float precision
                 const char* float_precision = FloatingPointTypeNames[(int)float_type];
-                TableRowText2("Active float precision", float_precision);
+                TableRowText2("Float precision", float_precision);
                 TableRowText2("Current phase", "%d/%d", computing_phase, PHASE_COUNT-1);
                 TableRowText2("Kernel", KernelModeNames[(int)deduced_kernel_mode]);
 
@@ -79,7 +84,7 @@ void Mandelbrot_Scene::UI::populateStats()
                             ss << MandelFeatureNames[i + 1];
                         }
                     }
-                    TableRowText2("Computing Features", "%s", ss.str().c_str());
+                    TableRowText2("Kernel Features", "%s", ss.str().c_str());
                 }
 
                 #if MANDEL_DEV_MODE
@@ -88,7 +93,7 @@ void Mandelbrot_Scene::UI::populateStats()
                 #endif
 
                 // compute timer
-                TableRowText2("Full compute time", "%.0f ms", dt_last);
+                TableRowText2("Compute timer", "%.0f ms", dt_last);
 
                 #if MANDEL_DEV_MODE
                 TableRowSpacing2();
@@ -156,6 +161,10 @@ void Mandelbrot_Scene::UI::populateStats()
                 TableRowSpacing2();
                 TableRowText2("    STRIPE min", std::to_string(stats.field_info.raw_min_stripe).c_str());
                 TableRowText2("    STRIPE max", std::to_string(stats.field_info.raw_max_stripe).c_str());
+
+                TableRowSpacing2();
+                TableRowText2("    STRIPE mean",       std::to_string(stats.field_info.raw_mean_stripe).c_str());
+                TableRowText2("    STRIPE magnitude",  std::to_string(stats.field_info.raw_mag_stripe).c_str());
 
                 //
 
@@ -294,6 +303,8 @@ void Mandelbrot_Scene::collectStats(bool renormalized)
         stats.field_info.raw_max_dist      = active_field.raw_max_dist;
         stats.field_info.raw_min_stripe    = active_field.raw_min_stripe;
         stats.field_info.raw_max_stripe    = active_field.raw_max_stripe;
+        stats.field_info.raw_mean_stripe   = active_field.raw_mean_stripe;
+        stats.field_info.raw_mag_stripe    = active_field.raw_mag_stripe;
 
         // final min/max values after normalization/toning/cycling
         stats.field_info.final_min_depth   = active_field.final_min_depth;
