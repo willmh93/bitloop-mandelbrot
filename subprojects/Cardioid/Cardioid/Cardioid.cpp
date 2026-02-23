@@ -160,7 +160,7 @@ void Cardioid_Project::projectPrepare(Layout& layout)
 {
     layout << create<Cardioid_Scene>();
 
-    if (!platform()->is_mobile())
+    if (!platform()->isMobile())
         layout << create<Cardioid_Graph_Scene>();
 }
 

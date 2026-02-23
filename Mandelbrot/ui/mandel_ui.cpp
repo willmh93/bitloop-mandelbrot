@@ -22,7 +22,7 @@ void Mandelbrot_Scene::UI::init()
 
     bl_scoped(bookmark_manager);
     bookmark_manager.loadCategoryDirs("/data/bookmarks");
-    bookmark_manager.ensureCategory("Examples");
+    //bookmark_manager.ensureCategory("Fast Examples");
 
     #if MANDEL_UPDATE_ALL_BOOKMARKS
     {
@@ -154,7 +154,7 @@ void Mandelbrot_Scene::UI::sidebar()
 
     ImGui::SeparatorText("Other");
     populateStats();
-    if (!platform()->is_mobile())
+    if (!platform()->isMobile())
     {
         populateMouseOrbit();
 
@@ -300,7 +300,7 @@ void Mandelbrot_Scene::UI::populateCameraView()
 {
     bl_scoped(camera);
 
-    //static bool show_view_by_default = !platform()->is_mobile(); // Expect navigate by touch for mobile
+    //static bool show_view_by_default = !platform()->isMobile(); // Expect navigate by touch for mobile
     if (ImGui::CollapsingHeaderBox("View", true))
     {
         bl_scoped(show_axis, display_alignment_overlay);
@@ -346,8 +346,8 @@ void Mandelbrot_Scene::UI::populateExamples()
     {
         bl_scoped(bookmark_manager);
 
-        const float sx = ImGui::GetStyle().ItemSpacing.x;
-        const float sy = ImGui::GetStyle().ItemSpacing.y;
+        const float spacing = scale_size(6.0f);
+        const float scroll_w = ImGui::GetStyle().ScrollbarSize;
 
         const float btn_w = 128.0f, btn_h = 72.0f;
         const float btn_sw = scale_size(btn_w), btn_sh = scale_size(btn_h);
@@ -357,23 +357,39 @@ void Mandelbrot_Scene::UI::populateExamples()
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.6f, 0.3f, 0.3f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
 
+        ImVec4 scroll_bg = ImGui::GetStyleColorVec4(ImGuiCol_ScrollbarBg);
+        scroll_bg = ImVec4(scroll_bg.x * 0.9f, scroll_bg.y * 0.9f, scroll_bg.z * 0.9f, scroll_bg.w);
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, scroll_bg);
+
         {
             for (int category_i = 0; category_i < bookmark_manager.size(); category_i++)
             {
                 auto [category_name, list] = bookmark_manager.at(category_i);
                 auto& bookmarks = list.getItems();
+                const std::string& dir_name = list.getDirName();
 
                 ImGui::PushID(category_i);
-                if (ImGui::CollapsingHeaderBox(category_name.c_str()))
+                if (ImGui::CollapsingHeaderBox(category_name.c_str(), false))
                 {
+                    const float avail_w = ImGui::GetContentRegionAvail().x - scroll_w;
                     const int count = (int)bookmarks.size();
-                    const int rows_visible = 3;
-                    const float strip_h = rows_visible * btn_sh + (rows_visible - 1) * sy;
+                    const int cols_visible = (int)std::floor((avail_w + 0.5f) / (btn_sw + spacing));
+                    const int rows_visible = (int)std::ceil((float)count / (float)cols_visible);
+                    const int rows_shown = std::min(4, rows_visible);
+                    const float strip_h = rows_shown * btn_sh + (rows_shown - 1) * spacing;
+                    const float wrap_x2 = avail_w - spacing;
 
-                    if (ImGui::BeginChild("##examples_region", ImVec2(0.0f, strip_h), 0))
+                    bool scrollable = (rows_shown < rows_visible);
+                    if (!scrollable)
                     {
-                        const float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+                        ImVec4 grab = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+                        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, grab);
+                        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, grab);
+                        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, grab);
+                    }
 
+                    if (ImGui::BeginChild("##examples_region", ImVec2(0.0f, strip_h), 0, ImGuiWindowFlags_AlwaysVerticalScrollbar))
+                    {
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
                         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0, 0, 0, 0));
                         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0, 0, 0, 0));
@@ -388,18 +404,20 @@ void Mandelbrot_Scene::UI::populateExamples()
                                 launchBookmark(bookmark.data);
                             ImGui::PopID();
 
-                            const float last_button_x2 = ImGui::GetItemRectMax().x;
-                            const float next_button_x2 = last_button_x2 + sx + btn_sw;
+                            const float last_button_x2 = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+                            const float next_button_x2 = last_button_x2 + spacing + btn_sw;
 
-                            if (idx + 1 < count && next_button_x2 < window_visible_x2)
-                                ImGui::SameLine(0.0f, sx);
+                            if (idx + 1 < count && next_button_x2 <= wrap_x2)
+                                ImGui::SameLine(0.0f, spacing);
                         }
 
                         ImGui::PopStyleVar();
                         ImGui::PopStyleColor(3);
-
                     }
                     ImGui::EndChild();
+
+                    if (!scrollable)
+                        ImGui::PopStyleColor(3);
 
                     bool allow_add_new = false;
 
@@ -409,8 +427,7 @@ void Mandelbrot_Scene::UI::populateExamples()
 
                     #ifndef BITLOOP_DEV_MODE
                     // if RELEASE build, don't allow modifying bundled example bookmarks, even if in mandel dev mode
-                    if (category_name == "Examples")
-                        allow_add_new = false;
+                    allow_add_new = false;
                     #endif
 
                     if (allow_add_new)
@@ -418,7 +435,7 @@ void Mandelbrot_Scene::UI::populateExamples()
                         if (ImGui::Button("Bookmark Active"))
                         {
                             // Generate bookmark on worker thread (since we also need to generate a thumbnail)
-                            bl_schedule([&, category_i, category_name](Mandelbrot_Scene& scene)
+                            bl_schedule([&, category_i, dir_name](Mandelbrot_Scene& scene)
                             {
                                 // Serialize Mandelbrot state
                                 std::string state_data = scene.serialize();
@@ -428,8 +445,8 @@ void Mandelbrot_Scene::UI::populateExamples()
                                 CapturePreset* preset = all_presets.findByAlias("thumb128x72_hd");
                                 assert(preset != nullptr);
 
-                                std::string thumb_path = ProjectBase::activeProject()->root_path(
-                                    "data/bookmarks/" + category_name + "/" + MandelBookmark(state_data).thumbFilename()
+                                std::string thumb_path = ProjectBase::activeProject()->rootPath(
+                                    "data/bookmarks/" + dir_name + "/" + MandelBookmark(state_data).thumbFilename()
                                 );
 
                                 // Create bookmark, generate thumbnail image, load direct from memory (also saves to data/thumbnails/ for embedding)
@@ -454,7 +471,7 @@ void Mandelbrot_Scene::UI::populateExamples()
             }
         }
 
-        ImGui::PopStyleColor(3);
+        ImGui::PopStyleColor(4);
 
         ImGui::EndCollapsingHeaderBox();
     }
@@ -495,7 +512,7 @@ void Mandelbrot_Scene::UI::populateQualityOptions()
             ImGui::Text("  = %d Iters", finalIterLimit(camera, quality, dynamic_iter_lim, tweening));
         }
 
-        if (!platform()->is_mobile())
+        if (!platform()->isMobile())
         {
             bl_scoped(interior_forwarding);
             bl_scoped(contract_expand_phases);
@@ -698,7 +715,7 @@ void Mandelbrot_Scene::UI::populateInputOptions()
                     ///}
                 }
 
-                if (!platform()->is_mobile())
+                if (!platform()->isMobile())
                 {
                     ImGui::Spacing();
 
@@ -779,7 +796,7 @@ void Mandelbrot_Scene::UI::populateInputOptions()
                     ImGui::SliderFloat("Offset", &dist_tone_params.brightness, -1.0f, 1.0f, "%.3f");
                 }
 
-                if (!platform()->is_mobile())
+                if (!platform()->isMobile())
                 {
                     // Histogram
                     ImGui::Spacing();
@@ -860,7 +877,7 @@ void Mandelbrot_Scene::UI::populateInputOptions()
                     ImGui::SliderFloat("Offset", &stripe_tone_params.brightness, -1.0f, 1.0f, "%.3f");
                 }
 
-                if (!platform()->is_mobile())
+                if (!platform()->isMobile())
                 {
                     // Histogram
                     ImGui::Spacing();
@@ -907,10 +924,11 @@ void Mandelbrot_Scene::UI::populateInputOptions()
 }
 void Mandelbrot_Scene::UI::populateShaderEditor()
 {
-    if (platform()->is_mobile())
+    if (platform()->isMobile())
         return; // shader editing on mobile is not really feasible. 
                 // todo: Provide template shaders and hook up shader inputs to UI controls (previous section)
 
+    
     if (ImGui::CollapsingHeaderBox("Shader", false))
     {
         ImGuiContext& g = *ImGui::GetCurrentContext();
@@ -919,6 +937,18 @@ void Mandelbrot_Scene::UI::populateShaderEditor()
         g.PlatformImeData.InputPos = ImVec2(0, 0);// ImVec2(cpos.x - 1.0f, cpos.y - g.FontSize);
         g.PlatformImeData.InputLineHeight = g.FontSize;
         g.PlatformImeViewport = ImGui::GetCurrentWindow()->Viewport->ID;
+
+        ImGui::TextUnformatted("Load shader template");
+        if (ImGui::Combo("###ShaderTemplate", &selected_shader_template_idx, ShaderPresetNames, (int)ShaderPreset::COUNT))
+        {
+            bl_scoped(shader_source_txt);
+
+            shader_source_txt = ShaderPresetScripts[selected_shader_template_idx];
+            editor.SetText(shader_source_txt);
+
+            selected_shader_template_idx = -1;
+        }
+        ImGui::Spacing();
 
         // update editor text on request from worker
         {
@@ -1031,32 +1061,68 @@ void Mandelbrot_Scene::UI::populateGradientOptions()
 {
     if (ImGui::CollapsingHeaderBox("Gradient", false))
     {
-        ImGui::BeginLabelledBox("Base Gradient");
+        //ImGui::BeginLabelledBox();
         {
             bl_scoped(gradient);
 
             ImGui::Text("Load Preset");
-            static int selecting_template = -1;
-            if (ImGui::Combo("###ColorTemplate", &selecting_template, ColorGradientNames, (int)GradientPreset::COUNT))
+            if (ImGui::Combo("###ColorTemplate", &selected_gradient_template_idx, ColorGradientNames, (int)GradientPreset::COUNT))
             {
-                generateGradientFromPreset(gradient, (GradientPreset)selecting_template);
-                selecting_template = -1;
+                generateGradientFromPreset(gradient, (GradientPreset)selected_gradient_template_idx);
+                selected_gradient_template_idx = -1;
             }
 
 
             ImGui::Dummy(scale_size(0, 8));
 
-            if (ImGui::GradientEditor(&gradient,
-                platform()->dpr(),
-                platform()->dpr() * platform()->thumbScale(),
-                scale_size(250.0f)))
-            {
-                // Shift (not needed?)
-                ///bl_pull(gradient_shifted, hue_shift, gradient_shift);
-                ///transformGradient(gradient_shifted, gradient, (float)gradient_shift, (float)hue_shift);
-            }
+            // Display gradient + marks
+            ImGui::GradientEditor(&gradient, platform()->dpr(), platform()->dpr() * platform()->thumbScale());
 
-            
+            // Fine-control inputs
+            if (gradient.getSelectedMark())
+            {
+                ImGui::BeginLabelledBox("Selected Mark");
+                {
+                    ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 20.0f * platform()->thumbScale(0.85f));
+
+                    float pos_x = ImGui::GetCursorPosX();
+                    float avail_w = ImGui::GetContentRegionAvail().x;
+                    ImGui::TextUnformatted("Index");
+
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(pos_x + avail_w / 3.0f + ImGui::GetStyle().ItemSpacing.x);
+                    ImGui::TextUnformatted("Position");
+
+                    // Selected Mark Index
+                    int selected_index = gradient.markIndex(gradient.getSelectedMark());
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x / 3.0f);
+                    if (ImGui::SliderInt("##mark_sel", &selected_index, 0, (int)gradient.getMarks().size() - 1, "%d", ImGuiSliderFlags_AlwaysClamp))
+                        gradient.setSelectedMark(gradient.getMarks()[selected_index]);
+
+                    // Selected Mark Position
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+                    if (ImGui::SliderFloat("##mark_pos", &gradient.getSelectedMark()->position, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp))
+                        gradient.refreshCache();
+
+                    ImGui::PopStyleVar();
+
+                    // Delete Mark
+                    if (ImGui::Button("Remove"))
+                    {
+                        gradient.removeMark(gradient.getSelectedMark()->uid);
+                    }
+                }
+            //    ImGui::EndLabelledBox();
+            //}
+
+            ImGui::Dummy(scale_size(0, 4));
+
+            //ImGui::BeginLabelledBox();
+            //{
+                ImGui::GradientEditorMarkColorPicker(&gradient, scale_size(250.0f));
+            }
+            ImGui::EndLabelledBox();
 
             #if MANDEL_DEV_MODE
             if (ImGui::Button("Copy gradient C++ code"))
@@ -1067,9 +1133,9 @@ void Mandelbrot_Scene::UI::populateGradientOptions()
 
             ImGui::Spacing();
         }
-        ImGui::EndLabelledBox();
+        //ImGui::EndLabelledBox();
 
-        ImGui::BeginLabelledBox("Transform");
+        ImGui::BeginLabelledBox("Transform Gradient");
         {
             bl_scoped(hue_shift, gradient_shift);
 
@@ -1109,7 +1175,7 @@ void Mandelbrot_Scene::UI::populateGradientOptions()
                 ImGui::GradientButton(&gradient_shifted, platform()->dpr());
             }
 
-            if (ImGui::Button("Set as base gradient"))
+            if (ImGui::Button("Set as base"))
             {
                 bl_scoped(gradient);
                 bl_pull_temp(gradient_shifted);
@@ -1374,7 +1440,7 @@ void Mandelbrot_Scene::UI::populateMouseOrbit()
 
 void Mandelbrot_Scene::UI::populateCaptureOptions()
 {
-    if (platform()->is_mobile())
+    if (platform()->isMobile())
         return;
 
     if (ImGui::CollapsingHeaderBox("Capture Options", false))
@@ -1386,7 +1452,7 @@ void Mandelbrot_Scene::UI::populateCaptureOptions()
         bl_scoped(valid_presets);
         populateCapturePresetsList<CapturePresetsSelectMode::MULTI>([&](int i) -> CapturePreset& {
             return standard_presets[i];
-        }, (int)standard_presets.size(), &valid_presets, selected_preset_i);
+        }, (int)standard_presets.size(), &valid_presets, selected_capture_preset_idx);
 
         ImGui::EndLabelledBox();
 

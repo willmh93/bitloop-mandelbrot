@@ -142,7 +142,7 @@ void Mandelbrot_Scene::UI::populateStats()
             ImGui::EndLabelledBox();
         }
 
-        if (!platform()->is_mobile())
+        if (!platform()->isMobile())
         {
             // --- normalize info ---
             ImGui::BeginLabelledBox("Normalization Field");
@@ -247,7 +247,7 @@ void Mandelbrot_Scene::UI::populateStats()
         }
 
         // --- capture info ---
-        if (!platform()->is_mobile())
+        if (!platform()->isMobile())
         {
             ImGui::BeginLabelledBox("Capture");
             if (ImGui::BeginTable("##capture_stats", 2, flags, ImVec2(-FLT_MIN, 0.0f)))

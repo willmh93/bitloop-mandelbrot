@@ -22,6 +22,61 @@ static const char* MandelFeatureNames[(int)KernelFeatures::COUNT] = {
     "STRIPE"
 };
 
+enum struct ShaderPreset
+{
+    ADDITIVE,
+    MULTIPLY_WEIGHTS,
+
+    ///////////
+    COUNT
+};
+
+static const char* ShaderPresetNames[(int)ShaderPreset::COUNT] = {
+    "ADDITIVE",
+    "MULTIPLY_WEIGHTS"
+};
+
+static const char* ShaderPresetScripts[(int)ShaderPreset::COUNT] = {
+    /// Shader: ADDITIVE
+    "// @pass base\n"
+    "return sampleGradient(wrap01(iter + dist + stripe));\n",
+
+    /// Shader: MULTIPLY_WEIGHTS
+    "// @pass base\n\n"
+    "// set your multiply weights (result is pure additive if all set to 0)\n"
+    "float iter_x_dist_weight       = 0.0; // iter   * dist\n"
+    "float dist_x_stripe_weight     = 0.0; // dist   * stripe\n"
+    "float stripe_x_iter_weight     = 0.0; // stripe * iter\n"
+    "float iter_x_distStripe_weight = 0.0; // iter   * (dist + stripe)\n"
+    "float dist_x_iterStripe_weight = 0.0; // dist   * (iter + stripe)\n"
+    "float stripe_x_iterDist_weight = 0.0; // stripe * (iter * dist)\n"
+    "\n"
+    "float base = iter + dist + stripe;\n"
+    "\n"
+    "// common products\n"
+    "float iter_dist   = iter * dist;\n"
+    "float dist_stripe = dist * stripe;\n"
+    "float stripe_iter = stripe * iter;\n"
+    "\n"
+    "float d_iter_x_dist   = iter_dist   - iter - dist;\n"
+    "float d_dist_x_stripe = dist_stripe - dist - stripe;\n"
+    "float d_stripe_x_iter = stripe_iter - stripe - iter;\n"
+    "\n"
+    "float d_iter_x_distStripe = (iter_dist + stripe_iter) - base;\n"
+    "float d_dist_x_iterStripe = (iter_dist + dist_stripe) - base;\n"
+    "float d_stripe_x_iterDist = (stripe_iter + dist_stripe) - base;\n"
+    "\n"
+    "float t = base\n"
+    "    + iter_x_dist_weight * d_iter_x_dist\n"
+    "    + dist_x_stripe_weight * d_dist_x_stripe\n"
+    "    + stripe_x_iter_weight * d_stripe_x_iter\n"
+    "    + iter_x_distStripe_weight * d_iter_x_distStripe\n"
+    "    + dist_x_iterStripe_weight * d_dist_x_iterStripe\n"
+    "    + stripe_x_iterDist_weight * d_stripe_x_iterDist;\n"
+    "\n"
+    "return sampleGradient(wrap01(t));\n"
+};
+
 template<typename T>
 struct GammaLUT
 {

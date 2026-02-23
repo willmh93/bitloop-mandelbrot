@@ -342,13 +342,24 @@ function(bl_merge_vcpkg_configuration out_config_json root_vcpkg_json child_vcpk
       endif()
     endif()
 
-    # Merge registries
+        # Merge registries
     string(JSON _len ERROR_VARIABLE _err LENGTH "${cfg_json}" "registries")
+
+    # Missing key => treat as empty registries list
+    if(_err)
+      # CMake reports missing members as an error string (not consistently "NOTFOUND")
+      string(TOLOWER "${_err}" _err_lc)
+      if(_err_lc MATCHES "not[ \t]*found" OR _err_lc MATCHES "member.*not[ \t]*found")
+        set(_len 0)
+        unset(_err)
+      endif()
+    endif()
+
     if(_err AND NOT _err STREQUAL "NOTFOUND" AND NOT _err STREQUAL "NOT_FOUND")
       message(FATAL_ERROR "Error reading registries[] from ${source_label}: ${_err}")
     endif()
 
-    if(NOT _len STREQUAL "" AND NOT _len STREQUAL "NOTFOUND" AND NOT _len STREQUAL "NOT_FOUND" AND NOT _len EQUAL 0)
+    if(NOT _len EQUAL 0)
       math(EXPR _last "${_len} - 1")
       foreach(i RANGE 0 ${_last})
         string(JSON _entry ERROR_VARIABLE _e0 GET "${cfg_json}" "registries" ${i})

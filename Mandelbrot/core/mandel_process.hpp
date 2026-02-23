@@ -12,7 +12,7 @@ void Mandelbrot_Scene::loadNextBatchSnapshotState()
     if (!isSnapshotting())
     {
         // no active snapshot processing, check if there is one pending...
-        const auto& examples = bookmark_manager.find("Examples").getItems();
+        const auto& examples = bookmark_manager.find("Curated").getItems();
 
         if (rendering_example_i >= examples.size())
         {

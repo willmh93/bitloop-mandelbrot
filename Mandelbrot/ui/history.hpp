@@ -90,7 +90,7 @@ void Mandelbrot_Scene::processUndoRedo(bool normalization_opts_changed [[maybe_u
 
 void Mandelbrot_Scene::historyOnKeyDown(KeyEvent e)
 {
-    if (!platform()->is_mobile())
+    if (!platform()->isMobile())
     {
         if (e.keyMod() & SDL_KMOD_LCTRL)
         {

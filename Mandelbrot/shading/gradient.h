@@ -9,7 +9,7 @@ enum struct GradientPreset
     RAINBOW,
     NEON_WAVES,
     SOFT_WAVES,
-    PHOTON,
+    REFRACTION,
     CLOUDS,
     RGB_BANDS,
     ///////////
@@ -112,7 +112,7 @@ inline void generateGradientFromPreset(
     }
     break;
 
-    case GradientPreset::PHOTON:
+    case GradientPreset::REFRACTION:
     {
         grad.addMark(0.0f, ImColor(0, 0, 0));
         grad.addMark(0.45f, ImColor(70, 70, 70));

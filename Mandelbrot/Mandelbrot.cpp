@@ -31,6 +31,7 @@ void Mandelbrot_Scene::sceneStart()
 
     generateGradientFromPreset(gradient, GradientPreset::CLASSIC);
 
+
     font = NanoFont::create("/data/fonts/DroidSans.ttf");
 
     for (int phase = 0; phase < PHASE_COUNT; phase++)
@@ -47,6 +48,13 @@ void Mandelbrot_Scene::sceneStart()
     #if MANDEL_UNVERSIONED_EXPERIMENTAL
     experimental.init();
     #endif
+    
+    loadState(
+        "CCklOi6EZKdSMpHFLPNHBxpy40N9oI1MgGmxoFXbfyjn8xz5m3fAmx5iLGIQIIk3lszQ7Mg8yQwwpHrHUkQl"
+        "dzrbyKXED5FHeCgAdactVYoun26BajGAMSEqzjV2ANp6ptWoojnrlv1KAZr5ceTnTdjdzToICm8jXb3v3cw1"
+        "aAdH41jVsjsDgnFhmhRKU6rGoBDHVntV7EcNINDXX62QpM1wAry6AhzIwQya9VsfXBy8WIn5AB2zOiy08IKg"
+        "WBr9m5YhPL66zmDsHhs9hn0scrcTvzueHd1xshl8yZaYQX5Tl6XmaOSFE83GoiTYDYwjV"
+    );
 }
 
 void Mandelbrot_Scene::sceneDestroy()
@@ -190,7 +198,7 @@ void Mandelbrot_Scene::viewportProcess(Viewport* ctx, double dt)
     processCapturing(finished_compute, reshade);
 
     // undo/redo logic
-    if (!platform()->is_mobile())
+    if (!platform()->isMobile())
         processUndoRedo(normalization_opts_changed, gradient_changed);
 
     // Gather stats / realtime info
@@ -305,7 +313,7 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
         ctx->setFontSize(20);
         ctx->setFillStyle(Color::white);
 
-        if (platform()->is_mobile())
+        if (platform()->isMobile())
         {
             // touchscreen instructions
             ctx->fillText("Controls:", scale_size(10.0), scale_size(10.0));

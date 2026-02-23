@@ -97,7 +97,7 @@ struct MandelBookmark : public Hashable
     { return thumbName() + ".webp"; }                            
 
     std::string thumbPath() const  // + full parent path
-    { return ProjectBase::activeProject()->root_path("data/bookmarks/" + thumbFilename()); } 
+    { return ProjectBase::activeProject()->rootPath("data/bookmarks/" + thumbFilename()); } 
 
     void loadThumbnail()
     {
@@ -125,6 +125,7 @@ struct MandelBookmark : public Hashable
 class MandelBookmarkList : public Hashable
 {
     std::vector<MandelBookmark> items;
+    std::string dir_name;
 
 public:
 
@@ -132,9 +133,11 @@ public:
     MandelBookmarkList(const MandelBookmarkList& rhs) 
     {
         items = rhs.items; 
+        dir_name = rhs.dir_name;
     }
     MandelBookmarkList& operator =(const MandelBookmarkList& rhs) { 
         items = rhs.items;
+        dir_name = rhs.dir_name;
         return *this; 
     }
 
@@ -143,11 +146,13 @@ public:
         StableHasher h;
         for (size_t i = 0; i < items.size(); i++) 
             h.add(items[i].hash());
+        h.add_string(dir_name);
         return h.finish();
     }
 
-    std::vector<MandelBookmark>&       getItems() { return items; }
-    const std::vector<MandelBookmark>& getItems() const { return items; }
+    std::vector<MandelBookmark>&       getItems()         { return items; }
+    const std::vector<MandelBookmark>& getItems()   const { return items; }
+    const std::string&                 getDirName() const { return dir_name; }
 
     void addItem(std::string_view data)
     {
@@ -161,7 +166,7 @@ public:
         invalidate_hash();
     }
 
-    bool loadDirectoryBookmarks(const char* dir)
+    bool loadDirectoryBookmarks(std::filesystem::path dir)
     {
         namespace fs = std::filesystem;
 
@@ -169,6 +174,8 @@ public:
 
         if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec))
             return false;
+
+        dir_name = dir.filename().string();
 
         items.clear();
         for (const fs::directory_entry& e : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec))
@@ -256,26 +263,43 @@ public:
         namespace fs = std::filesystem;
 
         std::error_code ec;
-        std::string root_dir = ProjectBase::activeProject()->root_path(parent_dir);
+        std::string root_dir = ProjectBase::activeProject()->rootPath(parent_dir);
 
         blPrint() << "loadCategoryDirs root dir: " << root_dir;
 
         if (!fs::exists(root_dir, ec) || !fs::is_directory(root_dir, ec))
             return;
 
+        struct BookmarkDir { std::string name, path; };
+        std::map<float, BookmarkDir> dir_map;
         for (const fs::directory_entry& e : fs::directory_iterator(root_dir, fs::directory_options::skip_permission_denied, ec))
         {
             if (ec) break;
             if (!e.is_directory(ec) || ec) { ec.clear(); continue; }
-
-            // Load bookmarks from directory, using directory name as list name
             const fs::path& p = e.path();
 
-            blPrint() << "loadCategoryDirs p: " << p.string();
+            // get sort key + name
+            const std::string list_name = p.filename().string();
+            std::size_t i0 = list_name.find_first_of('[');
+            std::size_t i1 = list_name.find_first_of(']');
+            std::size_t name_i = 0;
+            float sort_key = 1000.0f;
+            if (i1 != std::string::npos)
+            {
+                name_i = i1 + 1;
+                while (list_name[name_i] == ' ') name_i++;
+                sort_key = std::stof(list_name.substr(i0 + 1, i1 - i0));
+            }
+            const std::string name = list_name.substr(name_i);
+            const std::string path = p.lexically_normal().string();
 
-            const std::string list_name = p.stem().string();
-            lists[list_name].loadDirectoryBookmarks(p.lexically_normal().string().c_str());
+            // let map sort
+            dir_map[sort_key] = { name, path };
         }
+
+        // push to tsl ordered map to allow easy indexed lookup
+        for (auto item : dir_map)
+            lists[item.second.name].loadDirectoryBookmarks(item.second.path);
 
         invalidate_hash();
 
@@ -314,7 +338,7 @@ public:
             std::vector<MandelBookmark>& bookmarks = list.getItems();
             for (auto& bookmark : bookmarks)
             {
-                std::filesystem::path filepath = ProjectBase::activeProject()->root_path("data/bookmarks/");
+                std::filesystem::path filepath = ProjectBase::activeProject()->rootPath("data/bookmarks/");
                 filepath /= dir;
                 filepath /= list_name;
                 filepath /= bookmark.thumbFilename();
@@ -349,6 +373,8 @@ public:
         }
     }
 };
+
+// ========== brotli dictionary tuning helper ==========
 
 enum class DictScoreMode
 {

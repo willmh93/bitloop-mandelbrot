@@ -273,8 +273,10 @@ struct Mandelbrot_Scene : public Scene<Mandelbrot_Scene>, public MandelState
         std::string url_buf;
         std::string data_buf;
 
-        // preset filters
-        int selected_preset_i = 0;
+        // selected indices
+        int selected_capture_preset_idx = 0;
+        int selected_gradient_template_idx = -1;
+        int selected_shader_template_idx = -1;
 
         // shader editor
         TextEditor  editor;
