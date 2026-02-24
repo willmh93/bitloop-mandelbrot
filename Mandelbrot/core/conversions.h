@@ -13,8 +13,8 @@ template<KernelFeatures F> constexpr f32 smooth_depth_offset() { return (f32)bl:
 template<KernelFeatures F> constexpr f64 smooth_depth_offset_d() { return bl::log2(bl::log2(escape_radius2<F>())) - 1.0; }
 
 // baselines
-constexpr f128 Z0 = 1; // base zoom
-constexpr f128 H0 = 1; // base height
+constexpr f128 Z0 = 1.0_dd; // base zoom
+constexpr f128 H0 = 1.0_dd; // base height
 
 inline f64 predictFinalPhaseDuration(int phase_index, f64 phase_duration, std::array<f64, PHASE_COUNT>& phase_elapsed_mult_results)
 {

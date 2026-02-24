@@ -82,7 +82,7 @@ void Mandelbrot_Scene::sceneMounted(Viewport* ctx)
 
     navigator.setTarget(camera);
     navigator.setDirectCameraPanning(true);
-    navigator.restrictRelativeZoomRange(0.0001, 5.0e28);
+    navigator.restrictRelativeZoomRange(0.0001_dd, 5.0e28_dd);
 
     #ifdef __EMSCRIPTEN__
     // If URL has encoded state data, load on startup
@@ -283,7 +283,7 @@ void Mandelbrot_Scene::viewportDraw(Viewport* ctx) const
         for (auto& p : norm_field.world_field)
         {
             float rad = std::max(1.0f, p.weight * 4.0f);
-            ctx->fillEllipse<f128>(p.stage_pos, rad);
+            ctx->fillEllipse<f128>(p.stage_pos, f128{ rad });
         }
 		ctx->worldMode();
     }

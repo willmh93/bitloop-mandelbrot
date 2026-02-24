@@ -1388,7 +1388,7 @@ void computeOrbitVel(f128 x0, f128 y0, int iter_lim, std::vector<f64>& xs, std::
     using Complex = Complex<T>;
     constexpr T escape_r = T(16.0);
 
-    Complex z{ 0.0, 0.0 };
+    Complex z{ T{0.0}, T{0.0} };
     Complex c{ T(x0), T(y0) };
     //Complex z_vel{ 0.0, 0.0 };
 

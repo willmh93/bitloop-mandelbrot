@@ -20,7 +20,7 @@ void Mandelbrot_Scene::beginSteadyZoom()
     state_b.deserialize(data);
 
     // Set current state to match, but reset back to current zoom
-    f128 current_zoom = 1.0;// scene.camera.relativeZoom<f128>();
+    f128 current_zoom = 1.0_dd;// scene.camera.relativeZoom<f128>();
     static_cast<MandelState&>(*this) = state_b;
     camera.setRelativeZoom(current_zoom);
 

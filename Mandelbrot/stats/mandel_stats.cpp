@@ -202,7 +202,7 @@ void Mandelbrot_Scene::UI::populateStats()
                 bool escaped = (px.depth < INSIDE_MANDELBROT_SET_SKIPPED);
                 std::string x_str = to_string(stats.hovered_field_world_pos.x, decimals, true);
                 std::string y_str = to_string(stats.hovered_field_world_pos.y, decimals, true);
-                std::string dist_str = to_string(px.dist, decimals, true);
+                std::string dist_str = std::to_string(px.dist);
 
                 SetupTable2(col1_w);
 
